@@ -74,24 +74,24 @@ export default function MapPage() {
         .leaflet-control-attribution { display: none !important; }
       `}</style>
 
+      {/* Title block above map */}
+      <div className="mb-4 p-6 bg-white rounded-2xl border border-[#e2e8f0]">
+        <h1 className="text-[28px] font-extrabold leading-tight tracking-tight"
+          style={{ color:"#0F2A3D" }}>
+          Spatial Risk Assessment
+        </h1>
+        <p className="mt-2 text-[14px] leading-relaxed" style={{ color:"#6b7a8d" }}>
+          District monitoring for the agricultural season and rainfall detection.
+        </p>
+      </div>
+
       <div className="relative overflow-hidden rounded-2xl" style={{ height: "calc(100vh - 7.5rem)" }}>
 
         {/* Map */}
         <MapContainer center={[-13.5, 34.2]} zoom={7} style={{ height:"100%", width:"100%" }} zoomControl={false} ref={mapRef}>
           <TileLayer key={layerStyle} url={tile.url} attribution={tile.attr} />
-          <GeoJSON key="districts" data={malawiDistricts} style={featureStyle} onEachFeature={onEachFeature} />
+          <GeoJSON key="districts" data={malawiDistricts as any} style={featureStyle} onEachFeature={onEachFeature} />
         </MapContainer>
-
-        {/* Title block (top-left) */}
-        <div className="absolute left-6 top-6 z-[800] max-w-sm">
-          <h1 className="text-[32px] font-extrabold leading-tight tracking-tight drop-shadow-lg"
-            style={{ color:"#0F2A3D", textShadow:"0 1px 3px rgba(255,255,255,0.9)" }}>
-            Spatial Risk Assessment
-          </h1>
-          <p className="mt-1 text-[13px] leading-snug" style={{ color:"#1a2332", textShadow:"0 1px 2px rgba(255,255,255,0.8)" }}>
-            District monitoring for the agricultural season and rainfall detection.
-          </p>
-        </div>
 
         {/* Hovered tooltip */}
         {hoveredName && (

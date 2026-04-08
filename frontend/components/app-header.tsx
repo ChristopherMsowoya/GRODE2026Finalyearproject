@@ -177,7 +177,7 @@ export function AppHeader() {
       <div className="flex items-center gap-2 sm:gap-3 md:gap-10">
         <MobileSidebar />
         <span className="text-[15px] sm:text-[17px] font-bold tracking-tight hidden sm:block" style={{ color: "#0F2A3D" }}>
-          GRODE-Climate Intelligent System
+          GRODE MW
         </span>
         {/* Role indicator (Hidden on mobile & tablet, visible on desktop and up) */}
         <nav className="hidden lg:flex items-center gap-3 rounded-full bg-[#f0f4f8] p-1.5 px-2">

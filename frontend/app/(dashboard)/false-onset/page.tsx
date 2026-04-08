@@ -1,5 +1,6 @@
 ﻿"use client"
 
+import dynamic from "next/dynamic"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import type { LucideIcon } from "lucide-react"
@@ -9,7 +10,7 @@ import { getDistrictData } from "../../../lib/district-data"
 import type { DistrictEnvironmentalData } from "../../../lib/district-data"
 import malawiDistrictsData from "../../../lib/data/malawiDistricts.json"
 import malawiAdministrativeData from "../../../lib/data/malawiAdministrativeData.json"
-import FalseOnsetMap from "./false-onset-map"
+const FalseOnsetMap = dynamic(() => import("./false-onset-map"), { ssr: false })
 
 function RiskMeter({ riskLevel = "caution" }: { riskLevel?: string }) {
   const [visible, setVisible] = useState(false)
