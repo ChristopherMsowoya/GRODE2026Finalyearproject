@@ -1,0 +1,311 @@
+{
+  "districts": [
+    {
+      "name": "Lilongwe Central",
+      "traditionalAuthorities": [
+        {
+          "name": "Lilongwe Central TA",
+          "areas": [
+            {"name": "Area A", "riskLevel": "optimal", "soilMoisture": 68, "forecastOnset": "Nov 14"},
+            {"name": "Area B", "riskLevel": "caution", "soilMoisture": 55, "forecastOnset": "Nov 16"},
+            {"name": "Area C", "riskLevel": "optimal", "soilMoisture": 72, "forecastOnset": "Nov 13"}
+          ]
+        },
+        {
+          "name": "Lilongwe South TA",
+          "areas": [
+            {"name": "Area D", "riskLevel": "caution", "soilMoisture": 52, "forecastOnset": "Nov 18"},
+            {"name": "Area E", "riskLevel": "alert", "soilMoisture": 35, "forecastOnset": "Nov 24"},
+            {"name": "Area F", "riskLevel": "optimal", "soilMoisture": 65, "forecastOnset": "Nov 15"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lilongwe North",
+      "traditionalAuthorities": [
+        {
+          "name": "Lilongwe North TA",
+          "areas": [
+            {"name": "Area G", "riskLevel": "caution", "soilMoisture": 52, "forecastOnset": "Nov 18"},
+            {"name": "Area H", "riskLevel": "optimal", "soilMoisture": 71, "forecastOnset": "Nov 13"},
+            {"name": "Area I", "riskLevel": "caution", "soilMoisture": 48, "forecastOnset": "Nov 20"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Lilongwe South",
+      "traditionalAuthorities": [
+        {
+          "name": "Lilongwe South TA",
+          "areas": [
+            {"name": "Area J", "riskLevel": "alert", "soilMoisture": 35, "forecastOnset": "Nov 24"},
+            {"name": "Area K", "riskLevel": "caution", "soilMoisture": 50, "forecastOnset": "Nov 22"},
+            {"name": "Area L", "riskLevel": "alert", "soilMoisture": 30, "forecastOnset": "Nov 26"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Kasungu",
+      "traditionalAuthorities": [
+        {
+          "name": "Kasungu TA",
+          "areas": [
+            {"name": "Area M", "riskLevel": "optimal", "soilMoisture": 72, "forecastOnset": "Nov 12"},
+            {"name": "Area N", "riskLevel": "caution", "soilMoisture": 55, "forecastOnset": "Nov 19"},
+            {"name": "Area O", "riskLevel": "optimal", "soilMoisture": 66, "forecastOnset": "Nov 15"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ntchisi",
+      "traditionalAuthorities": [
+        {
+          "name": "Ntchisi TA",
+          "areas": [
+            {"name": "Area P", "riskLevel": "caution", "soilMoisture": 48, "forecastOnset": "Nov 20"},
+            {"name": "Area Q", "riskLevel": "optimal", "soilMoisture": 63, "forecastOnset": "Nov 16"},
+            {"name": "Area R", "riskLevel": "caution", "soilMoisture": 46, "forecastOnset": "Nov 22"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dowa",
+      "traditionalAuthorities": [
+        {
+          "name": "Dowa TA",
+          "areas": [
+            {"name": "Area S", "riskLevel": "optimal", "soilMoisture": 65, "forecastOnset": "Nov 15"},
+            {"name": "Area T", "riskLevel": "caution", "soilMoisture": 58, "forecastOnset": "Nov 17"},
+            {"name": "Area U", "riskLevel": "optimal", "soilMoisture": 71, "forecastOnset": "Nov 13"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Salima",
+      "traditionalAuthorities": [
+        {
+          "name": "Salima TA",
+          "areas": [
+            {"name": "Area V", "riskLevel": "caution", "soilMoisture": 55, "forecastOnset": "Nov 19"},
+            {"name": "Area W", "riskLevel": "optimal", "soilMoisture": 75, "forecastOnset": "Nov 11"},
+            {"name": "Area X", "riskLevel": "caution", "soilMoisture": 47, "forecastOnset": "Nov 23"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dedza",
+      "traditionalAuthorities": [
+        {
+          "name": "Dedza TA",
+          "areas": [
+            {"name": "Area Y", "riskLevel": "alert", "soilMoisture": 30, "forecastOnset": "Nov 26"},
+            {"name": "Area Z", "riskLevel": "caution", "soilMoisture": 44, "forecastOnset": "Nov 21"},
+            {"name": "Area AA", "riskLevel": "alert", "soilMoisture": 25, "forecastOnset": "Nov 30"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ntcheu",
+      "traditionalAuthorities": [
+        {
+          "name": "Ntcheu TA",
+          "areas": [
+            {"name": "Area BB", "riskLevel": "caution", "soilMoisture": 44, "forecastOnset": "Nov 21"},
+            {"name": "Area CC", "riskLevel": "optimal", "soilMoisture": 60, "forecastOnset": "Nov 16"},
+            {"name": "Area DD", "riskLevel": "caution", "soilMoisture": 49, "forecastOnset": "Nov 21"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Mzimba",
+      "traditionalAuthorities": [
+        {
+          "name": "Mzimba TA",
+          "areas": [
+            {"name": "Area EE", "riskLevel": "optimal", "soilMoisture": 71, "forecastOnset": "Nov 13"},
+            {"name": "Area FF", "riskLevel": "caution", "soilMoisture": 60, "forecastOnset": "Nov 16"},
+            {"name": "Area GG", "riskLevel": "optimal", "soilMoisture": 78, "forecastOnset": "Nov 10"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rumphi",
+      "traditionalAuthorities": [
+        {
+          "name": "Rumphi TA",
+          "areas": [
+            {"name": "Area HH", "riskLevel": "optimal", "soilMoisture": 75, "forecastOnset": "Nov 11"},
+            {"name": "Area II", "riskLevel": "optimal", "soilMoisture": 68, "forecastOnset": "Nov 14"},
+            {"name": "Area JJ", "riskLevel": "caution", "soilMoisture": 55, "forecastOnset": "Nov 19"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Nkhata Bay",
+      "traditionalAuthorities": [
+        {
+          "name": "Nkhata Bay TA",
+          "areas": [
+            {"name": "Area KK", "riskLevel": "caution", "soilMoisture": 60, "forecastOnset": "Nov 16"},
+            {"name": "Area LL", "riskLevel": "optimal", "soilMoisture": 72, "forecastOnset": "Nov 12"},
+            {"name": "Area MM", "riskLevel": "caution", "soilMoisture": 48, "forecastOnset": "Nov 20"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Karonga",
+      "traditionalAuthorities": [
+        {
+          "name": "Karonga TA",
+          "areas": [
+            {"name": "Area NN", "riskLevel": "optimal", "soilMoisture": 78, "forecastOnset": "Nov 10"},
+            {"name": "Area OO", "riskLevel": "optimal", "soilMoisture": 71, "forecastOnset": "Nov 13"},
+            {"name": "Area PP", "riskLevel": "caution", "soilMoisture": 60, "forecastOnset": "Nov 16"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Blantyre",
+      "traditionalAuthorities": [
+        {
+          "name": "Blantyre TA",
+          "areas": [
+            {"name": "Area QQ", "riskLevel": "alert", "soilMoisture": 28, "forecastOnset": "Nov 28"},
+            {"name": "Area RR", "riskLevel": "caution", "soilMoisture": 50, "forecastOnset": "Nov 22"},
+            {"name": "Area SS", "riskLevel": "alert", "soilMoisture": 32, "forecastOnset": "Nov 27"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Zomba",
+      "traditionalAuthorities": [
+        {
+          "name": "Zomba TA",
+          "areas": [
+            {"name": "Area TT", "riskLevel": "caution", "soilMoisture": 50, "forecastOnset": "Nov 22"},
+            {"name": "Area UU", "riskLevel": "optimal", "soilMoisture": 66, "forecastOnset": "Nov 15"},
+            {"name": "Area VV", "riskLevel": "caution", "soilMoisture": 47, "forecastOnset": "Nov 23"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Machinga",
+      "traditionalAuthorities": [
+        {
+          "name": "Machinga TA",
+          "areas": [
+            {"name": "Area WW", "riskLevel": "caution", "soilMoisture": 47, "forecastOnset": "Nov 23"},
+            {"name": "Area XX", "riskLevel": "optimal", "soilMoisture": 58, "forecastOnset": "Nov 17"},
+            {"name": "Area YY", "riskLevel": "caution", "soilMoisture": 46, "forecastOnset": "Nov 22"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Mangochi",
+      "traditionalAuthorities": [
+        {
+          "name": "Mangochi TA",
+          "areas": [
+            {"name": "Area ZZ", "riskLevel": "caution", "soilMoisture": 58, "forecastOnset": "Nov 17"},
+            {"name": "Area AAA", "riskLevel": "optimal", "soilMoisture": 65, "forecastOnset": "Nov 15"},
+            {"name": "Area BBB", "riskLevel": "caution", "soilMoisture": 55, "forecastOnset": "Nov 19"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Mulanje",
+      "traditionalAuthorities": [
+        {
+          "name": "Mulanje TA",
+          "areas": [
+            {"name": "Area CCC", "riskLevel": "alert", "soilMoisture": 25, "forecastOnset": "Nov 30"},
+            {"name": "Area DDD", "riskLevel": "caution", "soilMoisture": 49, "forecastOnset": "Nov 21"},
+            {"name": "Area EEE", "riskLevel": "alert", "soilMoisture": 28, "forecastOnset": "Nov 28"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chiradzulu",
+      "traditionalAuthorities": [
+        {
+          "name": "Chiradzulu TA",
+          "areas": [
+            {"name": "Area FFF", "riskLevel": "optimal", "soilMoisture": 66, "forecastOnset": "Nov 15"},
+            {"name": "Area GGG", "riskLevel": "caution", "soilMoisture": 50, "forecastOnset": "Nov 22"},
+            {"name": "Area HHH", "riskLevel": "optimal", "soilMoisture": 63, "forecastOnset": "Nov 16"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Chikwawa",
+      "traditionalAuthorities": [
+        {
+          "name": "Chikwawa TA",
+          "areas": [
+            {"name": "Area III", "riskLevel": "alert", "soilMoisture": 32, "forecastOnset": "Nov 27"},
+            {"name": "Area JJJ", "riskLevel": "caution", "soilMoisture": 46, "forecastOnset": "Nov 22"},
+            {"name": "Area KKK", "riskLevel": "alert", "soilMoisture": 25, "forecastOnset": "Nov 30"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Balaka",
+      "traditionalAuthorities": [
+        {
+          "name": "Balaka TA",
+          "areas": [
+            {"name": "Area LLL", "riskLevel": "caution", "soilMoisture": 46, "forecastOnset": "Nov 22"},
+            {"name": "Area MMM", "riskLevel": "optimal", "soilMoisture": 63, "forecastOnset": "Nov 16"},
+            {"name": "Area NNN", "riskLevel": "caution", "soilMoisture": 49, "forecastOnset": "Nov 21"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Mwanza",
+      "traditionalAuthorities": [
+        {
+          "name": "Mwanza TA",
+          "areas": [
+            {"name": "Area OOO", "riskLevel": "optimal", "soilMoisture": 63, "forecastOnset": "Nov 16"},
+            {"name": "Area PPP", "riskLevel": "caution", "soilMoisture": 55, "forecastOnset": "Nov 19"},
+            {"name": "Area QQQ", "riskLevel": "optimal", "soilMoisture": 66, "forecastOnset": "Nov 15"}
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Neno",
+      "traditionalAuthorities": [
+        {
+          "name": "Neno TA",
+          "areas": [
+            {"name": "Area RRR", "riskLevel": "caution", "soilMoisture": 49, "forecastOnset": "Nov 21"},
+            {"name": "Area SSS", "riskLevel": "optimal", "soilMoisture": 65, "forecastOnset": "Nov 15"},
+            {"name": "Area TTT", "riskLevel": "caution", "soilMoisture": 47, "forecastOnset": "Nov 23"}
+          ]
+        }
+      ]
+    }
+  ]
+}
