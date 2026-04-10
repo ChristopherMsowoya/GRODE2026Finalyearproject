@@ -108,6 +108,54 @@ By default, the pipeline:
 - analyzes Malawi
 - writes results to `backend/algorithms/outputs`
 
+## FastAPI Backend
+
+A FastAPI layer is available so the frontend can request results and trigger the pipeline.
+
+Main API file:
+
+- `backend/api/main.py`
+
+### Install dependencies
+
+From the project root:
+
+```powershell
+python -m pip install -r backend/algorithms/requirements.txt
+```
+
+### Run the API
+
+From the project root:
+
+```powershell
+python -m uvicorn backend.api.main:app --reload
+```
+
+The API will be available at:
+
+- `http://127.0.0.1:8000`
+- Swagger docs: `http://127.0.0.1:8000/docs`
+
+### Available endpoints
+
+- `GET /`
+  Basic API info
+- `GET /api/health`
+  Health check
+- `GET /api/results`
+  Returns the latest generated algorithm results
+- `POST /api/pipeline/run`
+  Runs the pipeline and refreshes the outputs
+
+Example request body for `POST /api/pipeline/run`:
+
+```json
+{
+  "region": "malawi"
+}
+```
+
 ## Output Files
 
 The pipeline generates:
@@ -209,3 +257,9 @@ A teammate can integrate this module if they know:
 - Results are only as strong as the amount and quality of CHIRPS data loaded.
 - The module does not yet attach results to district or TA names.
 - The module is currently Malawi-focused by default.
+
+## TO RUN BACKEND
+- python -m uvicorn backend.api.main:app --reload
+
+## TO RUN FRONTEND
+- npm run dev

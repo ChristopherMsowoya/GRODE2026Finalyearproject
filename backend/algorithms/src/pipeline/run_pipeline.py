@@ -3,9 +3,10 @@
 import json
 from pathlib import Path
 import csv
+import time
 
 from ingestion.chirps_loader import load_chirps
-from processing.grid_extractor import DEFAULT_BOUNDS, iter_grids_fast, subset_dataset
+from processing.grid_extractor import DEFAULT_BOUNDS, iter_grids_fast
 from utils.timeseries_utils import split_by_year
 from algorithms.onset import detect_onset_details_fast
 from algorithms.false_onset import calculate_false_onset_fast
@@ -52,8 +53,8 @@ def run(filepath=None, region="malawi", bounds=None):
             f"Place one or more datasets in {RAW_DATA_DIR} or pass a filepath to run()."
         )
 
-    ds = load_chirps(input_path)
-    ds = subset_dataset(ds, resolve_bounds(region=region, bounds=bounds))
+    resolved_bounds = resolve_bounds(region=region, bounds=bounds)
+    ds = load_chirps(input_path, bounds=resolved_bounds)
 
     results = []
 
@@ -109,10 +110,17 @@ def write_csv(results, output_path):
 
     fieldnames = list(results[0].keys())
 
-    with output_path.open("w", encoding="utf-8", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(results)
+    for attempt in range(3):
+        try:
+            with output_path.open("w", encoding="utf-8", newline="") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(results)
+            return
+        except PermissionError:
+            if attempt == 2:
+                raise
+            time.sleep(1)
 
 
 if __name__ == "__main__":
