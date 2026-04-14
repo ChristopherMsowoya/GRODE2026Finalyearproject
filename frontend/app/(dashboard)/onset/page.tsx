@@ -1,357 +1,369 @@
-﻿"use client"
+"use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { CalendarDays, CloudRain, Loader2, MapPin, RefreshCcw, X } from "lucide-react"
-
-import {
-  fetchDistrictSummary,
-  fetchTraditionalAuthoritySummary,
-  invalidateAlgorithmCaches,
-  triggerPipelineRun,
-  type DistrictSummary,
-  type TraditionalAuthoritySummary,
-} from "@/lib/algorithm-api"
+import { useEffect, useRef, useState } from "react"
 import { useUser } from "@/lib/user-context"
+import { getDistrictData } from "@/lib/district-data"
+import { CalendarDays, BarChart2, AlertCircle, ChevronDown, X } from "lucide-react"
+import Image from "next/image"
+import type { DistrictEnvironmentalData } from "@/lib/district-data"
 
-function normalizeUserDistrict(value: string | null | undefined, districts: DistrictSummary[]) {
-  if (!value) return districts[0]?.district ?? null
-
-  const match = districts.find((district) => district.district.toLowerCase() === value.toLowerCase())
-  return match?.district ?? districts[0]?.district ?? null
+// ─── Timeline marker data ────────────────────────────────────────────────────
+function getMarkers(data: DistrictEnvironmentalData) {
+  return [
+    { id: "p10",    pct: 12,  label: "EARLY (P10)",   date: data.rainfall.p10Date, color: "#1F7A63", size: "sm" as const },
+    { id: "median", pct: 50,  label: "MEDIAN ONSET",  date: data.rainfall.medianDate, color: "#0F2A3D", size: "lg" as const },
+    { id: "p90",    pct: 88,  label: "LATE (P90)",    date: data.rainfall.p90Date, color: "#d97706", size: "sm" as const },
+  ]
 }
 
-function formatDateLabel(value: string | null) {
-  if (!value) return "Not detected"
+// Optimal window spans pct 22 → 58 on the bar
+const WINDOW_START = 22
+const WINDOW_END   = 58
 
-  const parsed = new Date(value)
+// ─── Info cards ──────────────────────────────────────────────────────────────
+const INFO_CARDS = [
+  {
+    icon:  CalendarDays,
+    color: "#1F7A63",
+    bg:    "#E9F5EC",
+    title: "What is 'Onset'?",
+    body:  "Onset is the first significant rainfall event (usually 20mm or more in 3 days) that marks the start of the agricultural season.",
+  },
+  {
+    icon:  BarChart2,
+    color: "#0F2A3D",
+    bg:    "#e8edf2",
+    title: "The P10 & P90 Rule",
+    body:  "These dates show the range of uncertainty. P10 is an early start, while P90 represents the latest the rains typically begin.",
+  },
+  {
+    icon:  AlertCircle,
+    color: "#d97706",
+    bg:    "#FEF3C7",
+    title: "Why it matters",
+    body:  "Planting too early can lead to crop failure if dry spells follow. Planting too late may shorten the growing season.",
+  },
+]
 
-  if (Number.isNaN(parsed.getTime())) {
-    return value
-  }
-
-  return parsed.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  })
-}
-
-function onsetGuidance(summary: DistrictSummary | TraditionalAuthoritySummary | null) {
-  if (!summary) {
-    return {
-      title: "Select an area",
-      body: "Choose a district or T/A to see when the rains are usually detected and whether planting looks safer or riskier there.",
-      tone: "#0F2A3D",
-      background: "#f4f7fa",
-    }
-  }
-
-  const onsetRate = summary.onset_detection_rate
-  const falseOnset = summary.average_false_onset_probability
-  const cropStress = summary.average_crop_stress_probability
-
-  if (onsetRate >= 0.6 && falseOnset <= 0.3 && cropStress <= 0.3) {
-    return {
-      title: "More dependable planting signal",
-      body: "Rainfall onset is detected more often here, and follow-up dry-spell risk is relatively low.",
-      tone: "#1B5E20",
-      background: "#e8f5ea",
-    }
-  }
-
-  if (falseOnset > 0.3 || cropStress > 0.3) {
-    return {
-      title: "Plant with caution",
-      body: "This area can receive early rain, but follow-up dry spells still appear often enough to delay planting until the rain pattern is steadier.",
-      tone: "#8a4d00",
-      background: "#fff4df",
-    }
-  }
-
-  return {
-    title: "Watch the next rains closely",
-    body: "Onset is sometimes detected here, but not in every analyzed season. It is safer to confirm that the first rain is followed by more rain before planting widely.",
-    tone: "#0F2A3D",
-    background: "#edf4f8",
-  }
-}
-
-function SimpleMetric({
-  label,
-  value,
-}: {
-  label: string
-  value: string
-}) {
-  return (
-    <div className="rounded-2xl border border-[#e2e8f0] bg-white p-5 shadow-sm">
-      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#6b7a8d]">{label}</p>
-      <p className="mt-3 text-[24px] font-extrabold text-[#0F2A3D]">{value}</p>
-    </div>
-  )
-}
-
-export default function OnsetInfoPage() {
-  const { user } = useUser()
-  const [districtSummaries, setDistrictSummaries] = useState<DistrictSummary[]>([])
-  const [taSummaries, setTaSummaries] = useState<TraditionalAuthoritySummary[]>([])
-  const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null)
-  const [selectedTA, setSelectedTA] = useState<string | null>(null)
-  const [showDistrictSelector, setShowDistrictSelector] = useState(false)
-  const [showTASelector, setShowTASelector] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const loadSummaries = async () => {
-    setError(null)
-
-    try {
-      const [districtData, taData] = await Promise.all([
-        fetchDistrictSummary(),
-        fetchTraditionalAuthoritySummary(),
-      ])
-
-      setDistrictSummaries(districtData.districts)
-      setTaSummaries(taData.traditional_authorities)
-      setSelectedDistrict((current) => current ?? normalizeUserDistrict(user?.district, districtData.districts))
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load onset information.")
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }
+// ─── Animated timeline bar ───────────────────────────────────────────────────
+function TimelineBar({ markers }: { markers: ReturnType<typeof getMarkers> }) {
+  const [animated, setAnimated] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    void loadSummaries()
-  }, [user?.district])
-
-  const filteredTAs = useMemo(
-    () => taSummaries.filter((ta) => ta.district === selectedDistrict),
-    [taSummaries, selectedDistrict]
-  )
-
-  const selectedDistrictSummary = useMemo(
-    () => districtSummaries.find((district) => district.district === selectedDistrict) ?? districtSummaries[0] ?? null,
-    [districtSummaries, selectedDistrict]
-  )
-
-  const selectedTASummary = useMemo(
-    () => filteredTAs.find((ta) => ta.shape_id === selectedTA) ?? null,
-    [filteredTAs, selectedTA]
-  )
-
-  const activeSummary = selectedTASummary ?? selectedDistrictSummary
-  const guidance = onsetGuidance(activeSummary)
-
-  const handleRefresh = async () => {
-    setRefreshing(true)
-
-    try {
-      await triggerPipelineRun("malawi")
-      invalidateAlgorithmCaches()
-      await loadSummaries()
-    } catch (refreshError) {
-      setRefreshing(false)
-      setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh onset information.")
-    }
-  }
+    const timer = setTimeout(() => setAnimated(true), 200)
+    return () => clearTimeout(timer)
+  }, [])
 
   return (
-    <div className="space-y-6 bg-[#eef2f4] px-0 pb-6">
-      <div className="rounded-[20px] border border-[#e9edf1] bg-white p-6 shadow-sm md:p-8">
-        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-3">
-            <p className="text-[12px] uppercase tracking-[0.32em] text-[#6b7a8d]">Rainfall Onset</p>
-            <h1 className="text-4xl font-bold text-[#0F2A3D]">Onset Information</h1>
-            <p className="max-w-2xl text-sm leading-6 text-[#6b7a8d]">
-              Select a district or T/A to see when rain onset is usually detected and whether planting conditions look steady enough.
-            </p>
-          </div>
+    <div ref={ref} className="relative py-10">
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="inline-flex items-center gap-2 rounded-full border border-[#d8dee4] bg-[#f8fafb] px-4 py-3 text-sm font-semibold text-[#0F2A3D] hover:bg-[#f0f2f4]"
-            >
-              {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
-              Refresh
-            </button>
-
-            <div className="relative">
-              <button
-                onClick={() => setShowDistrictSelector((open) => !open)}
-                className="flex items-center gap-3 rounded-full border border-[#d8dee4] bg-[#f8fafb] px-4 py-3 transition-colors hover:bg-[#f0f2f4]"
-              >
-                <MapPin className="h-4 w-4 text-[#0b3a4a]" />
-                <span className="text-sm font-medium text-[#0F2A3D]">
-                  {selectedDistrictSummary?.district || "Select District"}
-                </span>
-              </button>
-
-              {showDistrictSelector && (
-                <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-[12px] border border-[#e2e8f0] bg-white shadow-lg">
-                  <div className="flex items-center justify-between border-b border-[#e2e8f0] p-4">
-                    <h3 className="text-sm font-semibold text-[#0F2A3D]">Select District</h3>
-                    <button onClick={() => setShowDistrictSelector(false)} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="max-h-72 overflow-y-auto p-2">
-                    {districtSummaries.map((district) => (
-                      <button
-                        key={district.district}
-                        onClick={() => {
-                          setSelectedDistrict(district.district)
-                          setSelectedTA(null)
-                          setShowDistrictSelector(false)
-                        }}
-                        className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[#f8fafb]"
-                      >
-                        {district.district}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                onClick={() => setShowTASelector((open) => !open)}
-                disabled={!selectedDistrict}
-                className="flex items-center gap-3 rounded-full border border-[#d8dee4] bg-[#f8fafb] px-4 py-3 transition-colors hover:bg-[#f0f2f4] disabled:opacity-50"
-              >
-                <MapPin className="h-4 w-4 text-[#0b3a4a]" />
-                <span className="text-sm font-medium text-[#0F2A3D]">
-                  {selectedTASummary?.traditional_authority || "Select T/A"}
-                </span>
-              </button>
-
-              {showTASelector && (
-                <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-[12px] border border-[#e2e8f0] bg-white shadow-lg">
-                  <div className="flex items-center justify-between border-b border-[#e2e8f0] p-4">
-                    <h3 className="text-sm font-semibold text-[#0F2A3D]">Select Traditional Authority</h3>
-                    <button onClick={() => setShowTASelector(false)} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="max-h-72 overflow-y-auto p-2">
-                    <button
-                      onClick={() => {
-                        setSelectedTA(null)
-                        setShowTASelector(false)
-                      }}
-                      className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[#f8fafb]"
-                    >
-                      All T/As in district
-                    </button>
-                    {filteredTAs.map((ta) => (
-                      <button
-                        key={ta.shape_id}
-                        onClick={() => {
-                          setSelectedTA(ta.shape_id ?? null)
-                          setShowTASelector(false)
-                        }}
-                        className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[#f8fafb]"
-                      >
-                        {ta.traditional_authority}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {error && <div className="rounded-2xl bg-[#fff5f5] px-5 py-4 text-sm text-[#8a3030]">{error}</div>}
-
+      {/* ── Optimal window shading ─────────────────────────────────────── */}
       <div
-        className="rounded-[20px] border px-5 py-5 shadow-sm"
-        style={{ background: guidance.background, borderColor: "rgba(15,42,61,0.08)" }}
+        className="absolute top-0 bottom-0 pointer-events-none"
+        style={{
+          left:    `${WINDOW_START}%`,
+          width:   `${WINDOW_END - WINDOW_START}%`,
+          background: "rgba(31,122,99,0.06)",
+          borderLeft:  "1.5px dashed rgba(31,122,99,0.35)",
+          borderRight: "1.5px dashed rgba(31,122,99,0.35)",
+          borderRadius: "2px",
+        }}
+      />
+
+      {/* ── Gradient bar ───────────────────────────────────────────────── */}
+      <div
+        className="relative h-[8px] w-full rounded-full overflow-hidden"
+        style={{
+          background: "linear-gradient(to right, #2E8B57 0%, #4aab85 22%, #8ecfb8 45%, #cce8df 62%, #e8d5a3 80%, #F4A261 100%)",
+        }}
+      />
+
+      {/* ── Median bounding indicator lines ────────────────────────────── */}
+      <div
+        className="absolute pointer-events-none"
+        style={{
+          left: `${markers[1].pct}%`,
+          top: 0,
+          bottom: 0,
+          transform: "translateX(-50%)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "12px",
+        }}
       >
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/70">
-            <CloudRain className="h-5 w-5" style={{ color: guidance.tone }} />
-          </div>
-          <div>
-            <p className="text-[18px] font-bold" style={{ color: guidance.tone }}>{guidance.title}</p>
-            <p className="mt-2 text-[14px] leading-6 text-[#4f6472]">
-              {guidance.body}
-            </p>
-          </div>
-        </div>
       </div>
 
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-        <SimpleMetric
-          label="Onset seen in seasons"
-          value={`${Math.round((activeSummary?.onset_detection_rate ?? 0) * 100)}%`}
-        />
-        <SimpleMetric
-          label="First onset date"
-          value={formatDateLabel(activeSummary?.first_detected_onset_date ?? null)}
-        />
-        <SimpleMetric
-          label="Latest onset date"
-          value={formatDateLabel(activeSummary?.latest_detected_onset_date ?? null)}
-        />
-        <SimpleMetric
-          label="Seasons analyzed"
-          value={`${activeSummary?.seasons_analyzed ?? 0}`}
-        />
+      {/* ── Labels (below bar) ─────────────────────────────────────────── */}
+      <div className="relative mt-5">
+        {markers.map(m => (
+          <div
+            key={m.id}
+            className="absolute flex flex-col items-center"
+            style={{ left: `${m.pct}%`, transform: "translateX(-50%)" }}
+          >
+            <span
+              className="text-[10px] font-bold uppercase tracking-widest mb-1"
+              style={{ color: m.color, opacity: 0.85 }}
+            >
+              {m.label}
+            </span>
+            <span
+              className="font-extrabold leading-none"
+              style={{
+                color:    m.color,
+                fontSize: m.size === "lg" ? "28px" : "17px",
+              }}
+            >
+              {m.date}
+            </span>
+            {m.size === "lg" && (
+              <span className="mt-1 text-[12px]" style={{ color: "#6b7a8d" }}>
+                Most likely date
+              </span>
+            )}
+          </div>
+        ))}
+        {/* Spacer to size the label area */}
+        <div style={{ height: "60px" }} />
       </div>
-
-      <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-[20px] border border-[#e9edf1] bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-3">
-            <CalendarDays className="h-5 w-5 text-[#0F2A3D]" />
-            <h2 className="text-[20px] font-bold text-[#0F2A3D]">What this means for planting</h2>
-          </div>
-
-          <div className="mt-5 space-y-4 text-[14px] leading-7 text-[#4f6472]">
-            <p>
-              The onset date is the time when the algorithm detects a meaningful start of seasonal rain.
-            </p>
-            <p>
-              If onset is detected often and false-onset risk is low, planting is generally safer after the first good rains.
-            </p>
-            <p>
-              If false-onset or crop-stress risk is high, it is better to wait for follow-up rain before planting a large area.
-            </p>
-          </div>
-        </div>
-
-        <div className="rounded-[20px] border border-[#e9edf1] bg-white p-6 shadow-sm">
-          <h2 className="text-[20px] font-bold text-[#0F2A3D]">Selected Area Summary</h2>
-          <div className="mt-5 space-y-4 text-[14px] leading-6 text-[#4f6472]">
-            <p>
-              <span className="font-semibold text-[#0F2A3D]">Area:</span>{" "}
-              {selectedTASummary
-                ? `${selectedTASummary.traditional_authority}, ${selectedTASummary.district}`
-                : selectedDistrictSummary?.district || "Not selected"}
-            </p>
-            <p>
-              <span className="font-semibold text-[#0F2A3D]">Grid cells used:</span>{" "}
-              {activeSummary?.grid_cell_count ?? 0}
-            </p>
-            <p>
-              <span className="font-semibold text-[#0F2A3D]">False-onset risk:</span>{" "}
-              {Math.round((activeSummary?.average_false_onset_probability ?? 0) * 100)}%
-            </p>
-            <p>
-              <span className="font-semibold text-[#0F2A3D]">Crop-stress risk:</span>{" "}
-              {Math.round((activeSummary?.average_crop_stress_probability ?? 0) * 100)}%
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {loading && <div className="rounded-2xl bg-white px-5 py-4 text-sm text-[#6b7a8d]">Loading live onset summaries...</div>}
     </div>
   )
 }
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+export default function OnsetInfoPage() {
+  const { user } = useUser()
+  const [selectedDistrict, setSelectedDistrict] = useState<string>("")
+  const [showDistrictMenu, setShowDistrictMenu] = useState(false)
+  const [districtData, setDistrictData] = useState<DistrictEnvironmentalData | null>(null)
+
+  // Set initial district from user profile if user is logged in
+  useEffect(() => {
+    if (user?.district) {
+      const data = getDistrictData(user.district)
+      setDistrictData(data)
+      setSelectedDistrict(data.district)
+    }
+  }, [user])
+
+  // Handle district change
+  const handleDistrictChange = (district: string) => {
+    const data = getDistrictData(district.toLowerCase())
+    setDistrictData(data)
+    setSelectedDistrict(data.district)
+    setShowDistrictMenu(false)
+  }
+
+  if (!districtData) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1
+              className="text-[36px] font-extrabold tracking-tight leading-tight"
+              style={{ color: "#0F2A3D" }}
+            >
+              Rainfall Onset Forecast
+            </h1>
+            <p className="text-[14px] text-[#6b7a8d] mt-1">Select a district to view forecast data</p>
+          </div>
+          
+          {/* District selector dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowDistrictMenu(!showDistrictMenu)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#e2e8f0] bg-white hover:bg-[#f0f4f8] transition-colors"
+            >
+              <span className="text-[13px] font-medium text-[#1a2332]">Select District</span>
+              <ChevronDown className="h-4 w-4 text-[#6b7a8d]" />
+            </button>
+
+            {showDistrictMenu && (
+              <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-lg bg-white border border-[#e2e8f0] shadow-lg max-h-64 overflow-y-auto">
+                {["Lilongwe", "Blantyre", "Dedza", "Zomba", "Mchinji", "Kasungu", "Mangochi", "Salima", "Nkhotakota"].map((district) => (
+                  <button
+                    key={district}
+                    onClick={() => handleDistrictChange(district)}
+                    className={`w-full px-4 py-2 text-left text-[13px] hover:bg-[#f0f4f8] transition-colors ${
+                      selectedDistrict === district ? "bg-[#E9F5EC] font-semibold text-[#1F7A63]" : "text-[#1a2332]"
+                    }`}
+                  >
+                    {district}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-white p-8 text-center border border-[#e2e8f0]">
+          <AlertCircle className="h-12 w-12 text-[#6b7a8d] mx-auto mb-3" />
+          <p className="text-[15px] font-medium text-[#1a2332] mb-2">No district selected</p>
+          <p className="text-[14px] text-[#6b7a8d]">Please select a district from the dropdown above to view rainfall onset forecast data.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const markers = getMarkers(districtData)
+  const optimalStart = markers[0].date
+  const optimalEnd = markers[2].date
+
+  return (
+    <div className="space-y-6">
+
+      {/* ── Page title with district selector ───────────────────────────── */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1
+            className="text-[36px] font-extrabold tracking-tight leading-tight"
+            style={{ color: "#0F2A3D" }}
+          >
+            Rainfall Onset Forecast
+          </h1>
+          <p className="text-[14px] text-[#6b7a8d] mt-1">for {selectedDistrict}</p>
+        </div>
+        
+        {/* District selector dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowDistrictMenu(!showDistrictMenu)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#e2e8f0] bg-white hover:bg-[#f0f4f8] transition-colors"
+          >
+            <span className="text-[13px] font-medium text-[#1a2332]">{selectedDistrict}</span>
+            <ChevronDown className="h-4 w-4 text-[#6b7a8d]" />
+          </button>
+
+          {showDistrictMenu && (
+            <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-lg bg-white border border-[#e2e8f0] shadow-lg max-h-64 overflow-y-auto">
+              {["Lilongwe", "Blantyre", "Dedza", "Zomba", "Mchinji", "Kasungu", "Mangochi", "Salima", "Nkhotakota"].map((district) => (
+                <button
+                  key={district}
+                  onClick={() => handleDistrictChange(district)}
+                  className={`w-full px-4 py-2 text-left text-[13px] hover:bg-[#f0f4f8] transition-colors ${
+                    selectedDistrict === district ? "bg-[#E9F5EC] font-semibold text-[#1F7A63]" : "text-[#1a2332]"
+                  }`}
+                >
+                  {district}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Info banner ──────────────────────────────────────────────────── */}
+      <div
+        className="px-5 py-4"
+        style={{
+          background:  "#DFF5E3",
+          borderLeft:  "4px solid #2E8B57",
+          borderRadius: "4px",
+        }}
+      >
+        <p className="text-[15px] font-medium leading-relaxed" style={{ color: "#1B5E20" }}>
+          Rainfall: <strong>{districtData.rainfall.totalMM}mm</strong> | 
+          Temperature: <strong>{districtData.temperature.current}°C</strong> | 
+          Soil Moisture: <strong>{districtData.soilMoisture.level}%</strong>
+        </p>
+        <p className="text-[14px] font-medium leading-relaxed mt-2" style={{ color: "#1B5E20" }}>
+          This shows when rains usually start in {selectedDistrict}. Use this data to plan your planting season effectively.
+        </p>
+      </div>
+
+      {/* ── Seasonal Timeline card ────────────────────────────────────────── */}
+      <div
+        className="rounded-2xl bg-white px-7 pt-6 pb-2"
+        style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px #e2e8f0" }}
+      >
+        {/* Header row */}
+        <div className="flex items-start justify-between mb-2">
+          <div>
+            <h2 className="text-[20px] font-bold" style={{ color: "#0F2A3D" }}>
+              Seasonal Timeline
+            </h2>
+            <p className="text-[13px] mt-0.5" style={{ color: "#6b7a8d" }}>
+              {districtData.location.region} {districtData.location.zone}
+            </p>
+          </div>
+          <div className="text-right">
+            <span
+              className="text-[10px] font-bold uppercase tracking-widest block"
+              style={{ color: "#1F7A63" }}
+            >
+              Optimal Window
+            </span>
+            <span
+              className="text-[18px] font-extrabold block mt-0.5"
+              style={{ color: "#0F2A3D" }}
+            >
+              {optimalStart} — {optimalEnd}
+            </span>
+          </div>
+        </div>
+
+        {/* Animated timeline */}
+        <TimelineBar markers={markers} />
+      </div>
+
+      {/* ── Info cards (3-col) ───────────────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-5">
+        {INFO_CARDS.map(({ icon: Icon, color, bg, title, body }) => (
+          <div
+            key={title}
+            className="rounded-xl bg-white p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+            style={{ boxShadow: "0 1px 8px -2px rgba(15,42,61,0.07), 0 0 0 1px #e2e8f0" }}
+          >
+            {/* Icon + title */}
+            <div className="flex items-center gap-3 mb-3">
+              <div
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
+                style={{ background: bg }}
+              >
+                <Icon className="h-4 w-4" style={{ color }} />
+              </div>
+              <h3 className="text-[14px] font-bold" style={{ color }}>
+                {title}
+              </h3>
+            </div>
+            <p className="text-[13px] leading-relaxed" style={{ color: "#6b7a8d" }}>
+              {body}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Bottom image card ────────────────────────────────────────────── */}
+      <div
+        className="relative overflow-hidden rounded-2xl group cursor-pointer"
+        style={{ height: "220px" }}
+      >
+        <Image
+          src="/satellite_farmland.png"
+          alt={`${selectedDistrict} Agricultural Zone — satellite view`}
+          fill
+          className="object-cover object-center transition-transform duration-500 group-hover:scale-105"
+        />
+        {/* dark gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
+
+        {/* Labels */}
+        <div className="absolute bottom-0 left-0 p-6">
+          <span
+            className="mb-2 inline-block rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white"
+            style={{ background: "#1F7A63" }}
+          >
+            Regional Context
+          </span>
+          <h3 className="text-[22px] font-extrabold text-white mt-1">
+            {selectedDistrict} {districtData.location.zone}
+          </h3>
+        </div>
+      </div>
+
+    </div>
+  )
+}
+

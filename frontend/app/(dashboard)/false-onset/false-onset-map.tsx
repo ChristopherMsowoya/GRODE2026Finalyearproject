@@ -1,75 +1,44 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
+import malawiDistrictsData from "../../../lib/data/malawiDistricts.json"
 
-import {
-  fetchBoundaries,
-  type DistrictSummary,
-  type GeoJsonFeatureCollection,
-  type TraditionalAuthoritySummary,
-} from "@/lib/algorithm-api"
+interface LocationData {
+  district: string | null
+  traditionalAuthority: string | null
+  area: string | null
+}
 
 interface FalseOnsetMapProps {
-  selectedDistrict: string | null
-  selectedTA: string | null
-  onSelectDistrict: (district: string) => void
-  onSelectTA: (taShapeId: string | null) => void
-  districtSummaries: DistrictSummary[]
-  taSummaries: TraditionalAuthoritySummary[]
+  selectedLocation: LocationData
+  onLocationChange: (location: LocationData) => void
+  userDistrict?: string | null
 }
 
-function colorForProbability(value: number) {
-  if (value > 0.6) return "#e36a6a"
-  if (value > 0.3) return "#f2b24a"
-  return "#9fd3a8"
+// Risk color mapping based on riskLevel
+const RISK_COLORS: Record<string, string> = {
+  alert: "#e36a6a",      // Red - High Risk
+  caution: "#f2b24a",    // Orange - Medium Risk
+  optimal: "#9fd3a8",    // Green - Low Risk
 }
 
-export default function FalseOnsetMap({
-  selectedDistrict,
-  selectedTA,
-  onSelectDistrict,
-  onSelectTA,
-  districtSummaries,
-  taSummaries,
-}: FalseOnsetMapProps) {
+export default function FalseOnsetMap({ selectedLocation, onLocationChange, userDistrict }: FalseOnsetMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<L.Map | null>(null)
-  const layerGroup = useRef<L.GeoJSON | null>(null)
-  const [districtBoundaries, setDistrictBoundaries] = useState<GeoJsonFeatureCollection | null>(null)
-  const [taBoundaries, setTaBoundaries] = useState<GeoJsonFeatureCollection | null>(null)
   const [isClient, setIsClient] = useState(false)
-
-  const districtSummaryByName = useMemo(
-    () => new Map(districtSummaries.map((summary) => [summary.district, summary])),
-    [districtSummaries]
-  )
-  const taSummaryById = useMemo(
-    () => new Map(taSummaries.map((summary) => [summary.shape_id, summary])),
-    [taSummaries]
-  )
+  const districtLayers = useRef<Map<string, L.GeoJSON<any>>>(new Map())
+  const legendRef = useRef<L.Control<any> | null>(null)
 
   useEffect(() => {
     setIsClient(true)
   }, [])
 
   useEffect(() => {
-    const loadBoundaries = async () => {
-      const [districtData, taData] = await Promise.all([
-        fetchBoundaries("districts", true),
-        fetchBoundaries("traditional-authorities", true),
-      ])
-      setDistrictBoundaries(districtData)
-      setTaBoundaries(taData)
-    }
+    if (!isClient || !mapContainer.current) return
 
-    void loadBoundaries()
-  }, [])
-
-  useEffect(() => {
-    if (!isClient || !mapContainer.current || !districtBoundaries || !taBoundaries) return
-
+    // Initialize map
     if (!map.current) {
       map.current = L.map(mapContainer.current, {
         center: [-13.2543, 34.3015],
@@ -78,112 +47,129 @@ export default function FalseOnsetMap({
         attributionControl: true,
       })
 
+      // Add light base layer
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "OpenStreetMap contributors",
+        attribution: "© OpenStreetMap contributors",
         maxZoom: 19,
       }).addTo(map.current)
 
-      L.control.zoom({ position: "topright" }).addTo(map.current)
-    }
-
-    if (layerGroup.current) {
-      layerGroup.current.remove()
-    }
-
-    if (selectedDistrict) {
-      const taFeatures = taBoundaries.features.filter((feature) => {
-        const summary = taSummaryById.get(feature.properties.shapeID as string)
-        return summary?.district === selectedDistrict
+      // Custom zoom controls positioned in top-right
+      const zoomControl = L.control.zoom({
+        position: "topright",
       })
+      zoomControl.addTo(map.current)
 
-      layerGroup.current = L.geoJSON({ type: "FeatureCollection", features: taFeatures } as any, {
-        style: (feature) => {
-          const summary = taSummaryById.get(feature?.properties?.shapeID)
-          const fillColor = colorForProbability(summary?.average_false_onset_probability ?? 0)
-          const isSelected = selectedTA === feature?.properties?.shapeID
-          return {
-            fillColor,
-            color: isSelected ? "#0F2A3D" : "#ffffff",
-            weight: isSelected ? 3 : 1,
-            opacity: 1,
-            fillOpacity: isSelected ? 0.88 : 0.68,
-          }
-        },
-        onEachFeature: (feature, layer) => {
-          const shapeId = feature.properties?.shapeID
-          const summary = taSummaryById.get(shapeId)
-          const taName = summary?.traditional_authority || feature.properties?.shapeName || "Unknown TA"
+      // Add legend once on map initialization
+      legendRef.current = (L.control as any)({ position: "bottomright" })
+      if (legendRef.current) {
+        legendRef.current.onAdd = () => {
+          const div = L.DomUtil.create("div", "map-legend")
+          div.style.cssText =
+            "background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); font-family: inter; font-size: 12px;"
 
-          layer.on({
-            click: () => onSelectTA(shapeId),
-            mouseover: () => {
-              if (layer instanceof L.Path) layer.setStyle({ weight: 3, fillOpacity: 0.88 })
-            },
-            mouseout: () => {
-              if (layer instanceof L.Path) {
-                const isSelected = selectedTA === shapeId
-                layer.setStyle({ weight: isSelected ? 3 : 1, fillOpacity: isSelected ? 0.88 : 0.68, color: isSelected ? "#0F2A3D" : "#ffffff" })
-              }
-            },
-          })
-
-          layer.bindTooltip(`${taName}: ${Math.round((summary?.average_false_onset_probability ?? 0) * 100)}% false-onset probability`, {
-            permanent: false,
-            direction: "top",
-          })
-        },
-      }).addTo(map.current)
-    } else {
-      layerGroup.current = L.geoJSON(districtBoundaries as any, {
-        style: (feature) => {
-          const districtName = feature?.properties?.shapeName
-          const summary = districtSummaryByName.get(districtName)
-          const fillColor = colorForProbability(summary?.average_false_onset_probability ?? 0)
-          const isSelected = selectedDistrict === districtName
-          return {
-            fillColor,
-            color: isSelected ? "#0F2A3D" : "#ffffff",
-            weight: isSelected ? 3 : 1,
-            opacity: 1,
-            fillOpacity: isSelected ? 0.88 : 0.68,
-          }
-        },
-        onEachFeature: (feature, layer) => {
-          const districtName = feature.properties?.shapeName
-          const summary = districtSummaryByName.get(districtName)
-          layer.on({
-            click: () => {
-              onSelectDistrict(districtName)
-              onSelectTA(null)
-            },
-            mouseover: () => {
-              if (layer instanceof L.Path) layer.setStyle({ weight: 3, fillOpacity: 0.88 })
-            },
-            mouseout: () => {
-              if (layer instanceof L.Path) {
-                const isSelected = selectedDistrict === districtName
-                layer.setStyle({ weight: isSelected ? 3 : 1, fillOpacity: isSelected ? 0.88 : 0.68, color: isSelected ? "#0F2A3D" : "#ffffff" })
-              }
-            },
-          })
-          layer.bindTooltip(`${districtName}: ${Math.round((summary?.average_false_onset_probability ?? 0) * 100)}% false-onset probability`, {
-            permanent: false,
-            direction: "top",
-          })
-        },
-      }).addTo(map.current)
+          div.innerHTML = `
+            <p style="margin: 0 0 8px 0; font-weight: 600; color: #0d2f3f;">False-Onset Risk Level</p>
+            <div style="margin-bottom: 6px;">
+              <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e36a6a; margin-right: 6px;"></span>
+              <span style="color: #0d2f3f;">High Risk</span>
+            </div>
+            <div style="margin-bottom: 6px;">
+              <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f2b24a; margin-right: 6px;"></span>
+              <span style="color: #0d2f3f;">Medium Risk</span>
+            </div>
+            <div>
+              <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9fd3a8; margin-right: 6px;"></span>
+              <span style="color: #0d2f3f;">Low Risk</span>
+            </div>
+          `
+          return div
+        }
+        legendRef.current.addTo(map.current!)
+      }
     }
-  }, [
-    districtBoundaries,
-    districtSummaryByName,
-    isClient,
-    onSelectDistrict,
-    onSelectTA,
-    selectedDistrict,
-    selectedTA,
-    taBoundaries,
-    taSummaryById,
-  ])
+
+    // Clear existing layers
+    districtLayers.current.forEach(layer => map.current!.removeLayer(layer))
+    districtLayers.current.clear()
+
+    // Add Malawi districts with false-onset risk visualization
+    const geoJsonLayer = L.geoJSON(malawiDistrictsData as any, {
+      style: (feature) => {
+        const districtName = feature!.properties.name
+        const riskLevel = feature!.properties.riskLevel
+        const color = RISK_COLORS[riskLevel] || "#9fd3a8"
+
+        const isSelected = selectedLocation.district === districtName
+        const isUserDistrict = userDistrict === districtName
+
+        return {
+          fillColor: color,
+          color: isSelected ? "#ffffff" : isUserDistrict ? "#2563eb" : "#ffffff",
+          weight: isSelected ? 3 : isUserDistrict ? 2 : 1,
+          opacity: isSelected ? 1 : isUserDistrict ? 0.8 : 0.6,
+          fillOpacity: isSelected ? 0.9 : 0.7,
+        }
+      },
+      onEachFeature: (feature: any, layer: any) => {
+        const districtName = feature.properties.name
+
+        layer.on('click', () => {
+          onLocationChange({ district: districtName, traditionalAuthority: null, area: null })
+        })
+
+        // Add hover effects
+        layer.on('mouseover', function(this: any) {
+          this.setStyle({
+            weight: 3,
+            opacity: 1,
+            fillOpacity: 0.9,
+          })
+        })
+
+        layer.on('mouseout', function(this: any) {
+          const isSelected = selectedLocation.district === districtName
+          const isUserDistrict = userDistrict === districtName
+          this.setStyle({
+            weight: isSelected ? 3 : isUserDistrict ? 2 : 1,
+            opacity: isSelected ? 1 : isUserDistrict ? 0.8 : 0.6,
+            fillOpacity: isSelected ? 0.9 : 0.7,
+          })
+        })
+
+        districtLayers.current.set(districtName, layer)
+      }
+    }).addTo(map.current!)
+
+    // Zoom to selected district if one is selected
+    if (selectedLocation.district) {
+      const selectedFeature = (malawiDistrictsData as any).features.find(
+        (f: any) => f.properties.name === selectedLocation.district
+      )
+      if (selectedFeature && map.current) {
+        const bounds = L.geoJSON(selectedFeature).getBounds()
+        map.current.fitBounds(bounds, { padding: [20, 20], maxZoom: 10 })
+      }
+    }
+
+    return () => {
+      // Cleanup is optional for Leaflet maps
+    }
+  }, [isClient, selectedLocation.district, userDistrict, onLocationChange])
+
+  // Update layer styles when selection changes
+  useEffect(() => {
+    districtLayers.current.forEach((layer, districtName) => {
+      const isSelected = selectedLocation.district === districtName
+      const isUserDistrict = userDistrict === districtName
+
+      layer.setStyle({
+        color: isSelected ? "#ffffff" : isUserDistrict ? "#2563eb" : "#ffffff",
+        weight: isSelected ? 3 : isUserDistrict ? 2 : 1,
+        opacity: isSelected ? 1 : isUserDistrict ? 0.8 : 0.6,
+        fillOpacity: isSelected ? 0.9 : 0.7,
+      })
+    })
+  }, [selectedLocation.district, userDistrict])
 
   return <div ref={mapContainer} style={{ width: "100%", height: "100%", minHeight: "400px" }} />
 }
