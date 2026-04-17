@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 *.py[cod]
+.env
+.env.*
+!.env.example
 
 # Algorithm runtime artifacts
 backend/algorithms/outputs/*.json

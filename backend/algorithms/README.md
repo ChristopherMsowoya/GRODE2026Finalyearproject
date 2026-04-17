@@ -72,9 +72,25 @@ The pipeline expects CHIRPS NetCDF files such as:
 - `chirps-v2.0.2025.days_p25.nc`
 - `chirps-v2.0.2026.days_p25.nc`
 
+For finer spatial detail, prefer the official `0.05°` daily files:
+
+- `chirps-v2.0.2024.days_p05.nc`
+- `chirps-v2.0.2025.days_p05.nc`
+- `chirps-v2.0.2026.days_p05.nc`
+
 You can place one file or many files in `data/raw`.
 
 If multiple CHIRPS files are present, the loader combines them along the time dimension. This means the algorithm works better when more yearly files are available because the probabilities are then based on more seasons.
+
+### Downloading official 0.05° CHIRPS files
+
+From the project root:
+
+```powershell
+python -m backend.algorithms.src.ingestion.download_chirps 2022 2023 2024 2025
+```
+
+This downloads the official `0.05°` daily NetCDF files into `backend/algorithms/data/raw`.
 
 ## Why More CHIRPS Files Matter
 
