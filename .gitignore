@@ -13,3 +13,4 @@ backend/algorithms/data/raw/*.nc
 # Keep these folders in the repo structure
 !backend/algorithms/data/raw/.gitkeep
 !backend/algorithms/outputs/.gitkeep
+backend/backend/algorithms/data/raw/
