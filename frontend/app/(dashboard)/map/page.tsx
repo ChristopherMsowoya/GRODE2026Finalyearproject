@@ -267,6 +267,20 @@ export default function MapPage() {
                       {selectedLocation.latitude.toFixed(4)}, {selectedLocation.longitude.toFixed(4)}
                     </p>
                   </div>
+                  <div className="rounded-xl bg-white p-3 border border-[#e9edf1]">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">5km Grid Cell</p>
+                    <p className="mt-1 font-semibold text-[#0F2A3D]">
+                      {selectedLocation.grid_id || "Unknown"}
+                    </p>
+                  </div>
+                  <div className="col-span-2 rounded-xl bg-white p-3 border border-[#e9edf1]">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">TA Grid Coverage</p>
+                    <p className="mt-1 font-semibold text-[#0F2A3D]">
+                      {selectedLocation.traditional_authority 
+                        ? `${taCounts.find(ta => ta.traditional_authority === selectedLocation.traditional_authority)?.grid_cell_count || 0} grid cells in ${selectedLocation.traditional_authority}`
+                        : "TA coverage not available"}
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
@@ -274,7 +288,7 @@ export default function MapPage() {
         </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl" style={{ height: "calc(100vh - 7.5rem)" }}>
+            <div className="relative overflow-hidden rounded-2xl" style={{ height: "calc(100vh - 7.5rem)" }}>
 
         {/* Map */}
         <MapContainer center={[-13.5, 34.2]} zoom={7} style={{ height:"100%", width:"100%" }} zoomControl={false} ref={mapRef}>
@@ -291,7 +305,51 @@ export default function MapPage() {
         )}
 
         {/* Data Legend / Stats (bottom-left) */}
+        <div className="absolute bottom-6 left-6 z-[800] w-72 rounded-2xl p-5"
+          style={{ background:"rgba(255,255,255,0.95)", backdropFilter:"blur(16px)", boxShadow:"0 16px 48px rgba(15,42,61,0.22), 0 0 0 1px rgba(255,255,255,0.7)" }}>
+          <div className="mb-4 flex items-center justify-between">
+             <h3 className="text-sm font-extrabold text-[#0F2A3D]">Algorithm Intel</h3>
+             {dbHealth && dbHealth.status === "ok" ? (
+               <span className="flex items-center gap-1.5 rounded-full bg-[#E9F5EC] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#1F7A63]">
+                 <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#1F7A63]"></div>
+                 Live
+               </span>
+             ) : (
+               <span className="flex items-center gap-1.5 rounded-full bg-[#FEF3C7] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#d97706]">
+                  Connecting...
+               </span>
+             )}
+          </div>
 
+          <div className="space-y-3">
+             <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-xs font-semibold text-[#6b7a8d]"><Database className="h-3.5 w-3.5" /> PostGIS Bounds</span>
+                <span className="text-xs font-bold text-[#0F2A3D]">{dbHealth && dbHealth.grid_cell_count ? `${dbHealth.grid_cell_count.toLocaleString()}` : "..."}</span>
+             </div>
+             <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-xs font-semibold text-[#6b7a8d]"><Layers className="h-3.5 w-3.5" /> Analyzed TAs</span>
+                <span className="text-xs font-bold text-[#0F2A3D]">{topTaCounts.length || "..."}</span>
+             </div>
+             <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-xs font-semibold text-[#6b7a8d]"><MapPin className="h-3.5 w-3.5" /> Analyzed Districts</span>
+                <span className="text-xs font-bold text-[#0F2A3D]">{Object.keys(liveDistricts).length || "..."}</span>
+             </div>
+          </div>
+          
+          {topTaCounts.length > 0 && (
+             <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
+               <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[#6b7a8d]">Largest TA Grids</h4>
+               <div className="space-y-2">
+                 {topTaCounts.slice(0, 4).map((ta, idx) => (
+                    <div key={ta.traditional_authority} className="flex justify-between items-center text-xs">
+                        <span className="truncate pr-2 font-medium text-[#0F2A3D]">{idx+1}. {ta.traditional_authority}</span>
+                        <span className="font-bold text-[#6b7a8d]">{ta.grid_cell_count} cells</span>
+                    </div>
+                 ))}
+               </div>
+             </div>
+          )}
+        </div>
 
         {/* District info card (bottom-center) */}
         {cardVisible && (

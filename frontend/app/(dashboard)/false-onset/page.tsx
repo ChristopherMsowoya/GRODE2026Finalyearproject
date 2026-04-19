@@ -220,8 +220,10 @@ export default function FalseOnsetRiskPage() {
   // Get risk level — prefer live API data
   const getRiskLevel = () => {
     if (liveSelectedDistrict) {
-      const level = liveSelectedDistrict.overall_risk_level
-      return level === 'High' ? 'alert' : level === 'Medium' ? 'caution' : 'optimal'
+      const prob = liveSelectedDistrict.average_false_onset_probability
+      if (prob > 0.60) return 'alert'
+      if (prob > 0.30) return 'caution'
+      return 'optimal'
     }
     if (areaData && (areaData as any).riskLevel) {
       return (areaData as any).riskLevel
@@ -327,7 +329,7 @@ export default function FalseOnsetRiskPage() {
                 <div className="flex flex-col gap-4">
                   <div className="rounded-[14px] bg-[#fdf8f2] p-4 border border-[#f1e6d0]">
                     <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">False-Onset Prob.</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">{(liveSelectedDistrict.overall_risk_probability * 100).toFixed(1)}%</p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">{(liveSelectedDistrict.average_false_onset_probability * 100).toFixed(1)}%</p>
                   </div>
                   <div className="rounded-[14px] bg-[#f0fdf4] p-4 border border-[#bbf7d0]">
                     <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Grid Cells Analysed</p>
@@ -358,7 +360,7 @@ export default function FalseOnsetRiskPage() {
 
                   <RiskMeter 
                     riskLevel={getRiskLevel()} 
-                    probability={liveSelectedDistrict ? liveSelectedDistrict.overall_risk_probability : undefined} 
+                    probability={liveSelectedDistrict ? liveSelectedDistrict.average_false_onset_probability : undefined} 
                   />
 
                   <div
@@ -381,7 +383,7 @@ export default function FalseOnsetRiskPage() {
                             'Low risk conditions. Safe for planting.'}
                         </p>
                         <p className="mt-1.5 text-[13px] leading-relaxed text-[#6b7a8d]">
-                          {`The current weather patterns suggest a ${(liveSelectedDistrict.overall_risk_probability * 100).toFixed(0)}% probability of a dry spell following initial rains. ${
+                          {`The current weather patterns suggest a ${(liveSelectedDistrict.average_false_onset_probability * 100).toFixed(0)}% probability of a dry spell following initial rains. ${
                             getRiskLevel() === 'alert' ?
                               'Planting now may result in total crop loss during the upcoming dry spell.' :
                             getRiskLevel() === 'caution' ?

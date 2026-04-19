@@ -14,3 +14,4 @@ backend/algorithms/data/raw/*.nc
 !backend/algorithms/data/raw/.gitkeep
 !backend/algorithms/outputs/.gitkeep
 backend/backend/algorithms/data/raw/
+backend/backend/algorithms/data/raw/

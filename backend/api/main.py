@@ -18,10 +18,9 @@ DISTRICT_CACHE_PATH = ALGORITHMS_OUTPUTS / "district_summary_cache.json"
 TA_CACHE_PATH = ALGORITHMS_OUTPUTS / "ta_summary_cache.json"
 SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
 
+# Add algorithm src to path (lazy — pipeline imported inside handler only)
 if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
-
-from pipeline.run_pipeline import run  # noqa: E402
 
 
 class PipelineRunRequest(BaseModel):
@@ -209,9 +208,10 @@ def get_ta_summary():
         except Exception:
             pass
 
+    results_mtime = RESULTS_JSON_PATH.stat().st_mtime
     ta_summaries = build_ta_summaries()
     TA_CACHE_PATH.write_text(
-        json.dumps({"results_mtime": results_mtime, "traditional_authorities": ta_summaries}, default=str),
+        json.dumps({"results_mtime": str(results_mtime), "traditional_authorities": ta_summaries}, default=str),
         encoding="utf-8",
     )
     return {
@@ -257,6 +257,9 @@ def search_locations(name: str = Query(min_length=2), limit: int = Query(default
 
 @app.post("/api/pipeline/run")
 def run_pipeline(payload: PipelineRunRequest):
+    # Lazy import — only loads xarray/netcdf4 when the pipeline is actually triggered
+    from pipeline.run_pipeline import run  # noqa: E402
+
     run(region=payload.region)
 
     results = load_results()

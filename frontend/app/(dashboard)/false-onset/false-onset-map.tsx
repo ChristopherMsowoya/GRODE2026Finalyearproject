@@ -111,15 +111,15 @@ export default function FalseOnsetMap({
         <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False-Onset Risk</p>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e36a6a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">High Risk (&gt;60%)</span>
+          <span style="color: #0d2f3f;">High Risk</span>
         </div>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f2b24a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">Medium Risk (31–60%)</span>
+          <span style="color: #0d2f3f;">Medium Risk</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9fd3a8; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">Low Risk (≤30%)</span>
+          <span style="color: #0d2f3f;">Low Risk</span>
         </div>
       `
       return div
@@ -178,7 +178,7 @@ export default function FalseOnsetMap({
           style: (feature) => {
             const name = feature?.properties?.shapeName as string
             const districtData = districtRiskMap[name]
-            const prob = districtData?.overall_risk_probability ?? 0
+            const prob = districtData?.average_false_onset_probability ?? 0
             const color = getFalseOnsetColor(prob)
             const isSelected = selectedLocation.district === name
             const isUser = userDistrict?.toLowerCase() === name?.toLowerCase()
@@ -194,7 +194,7 @@ export default function FalseOnsetMap({
           onEachFeature: (feature: any, featureLayer: any) => {
             const name = feature.properties?.shapeName as string
             const districtData = districtRiskMap[name]
-            const prob = districtData?.overall_risk_probability
+            const prob = districtData?.average_false_onset_probability
             const label = prob !== undefined ? getRiskLabel(prob) : "No data"
             const probText = prob !== undefined ? `${(prob * 100).toFixed(1)}%` : "–"
 

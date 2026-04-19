@@ -111,15 +111,15 @@ export default function CropStressMap({
           <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">Crop Stress Level</p>
           <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
             <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e06060; flex-shrink: 0;"></span>
-            <span style="color: #0d2f3f;">High Stress (&gt;60%)</span>
+            <span style="color: #0d2f3f;">High Stress</span>
           </div>
           <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
             <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f3b34c; flex-shrink: 0;"></span>
-            <span style="color: #0d2f3f;">Medium Stress (31–60%)</span>
+            <span style="color: #0d2f3f;">Medium Stress</span>
           </div>
           <div style="display: flex; align-items: center; gap: 6px;">
             <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #8fcf9e; flex-shrink: 0;"></span>
-            <span style="color: #0d2f3f;">Low Stress (≤30%)</span>
+            <span style="color: #0d2f3f;">Low Stress</span>
           </div>
         `
         return div

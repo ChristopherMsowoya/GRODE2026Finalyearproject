@@ -204,7 +204,7 @@ export default function DashboardPage() {
   const defaultDistrict = formatDistrict(user?.district)
   const districtRiskData = liveDistrictData.find(d => d.district === defaultDistrict)
 
-  const foProb = districtRiskData ? (districtRiskData.overall_risk_probability || 0) : 0.90
+  const foProb = districtRiskData ? (districtRiskData.average_false_onset_probability || 0) : 0.90
   const foLevel = foProb > 0.6 ? "HIGH" : foProb > 0.3 ? "MED" : "LOW"
   const foColor = foProb > 0.6 ? "#D64545" : foProb > 0.3 ? "#F4A261" : "#1F7A63"
   const foPercent = (foProb * 100).toFixed(0) + "%"
@@ -219,6 +219,40 @@ export default function DashboardPage() {
   const csProb = districtRiskData ? (districtRiskData.average_crop_stress_probability || 0) : 0.45
   const csLevel = csProb > 0.6 ? "HIGH" : csProb > 0.3 ? "MED" : "LOW"
   const csColor = csProb > 0.6 ? "#D64545" : csProb > 0.3 ? "#F4A261" : "#1F7A63"
+
+  // ─── Onset Status (live from backend) ───
+  const onsetRate = districtRiskData?.onset_detection_rate ?? null
+  const latestOnsetDate = districtRiskData?.latest_detected_onset_date ?? null
+  const firstOnsetDate  = districtRiskData?.first_detected_onset_date  ?? null
+
+  const onsetStatus = liveStatus === "loading"
+    ? { label: "Analyzing…",    color: "#6b7a8d", bg: "rgba(107,122,141,0.08)", border: "rgba(107,122,141,0.3)" }
+    : onsetRate === null
+    ? { label: "No Data",       color: "#6b7a8d", bg: "rgba(107,122,141,0.08)", border: "rgba(107,122,141,0.3)" }
+    : onsetRate >= 0.8
+    ? { label: "Confirmed",     color: "#1F7A63", bg: "rgba(31,122,99,0.08)",   border: "rgba(31,122,99,0.3)"  }
+    : onsetRate >= 0.4
+    ? { label: "Intermittent",  color: "#F4A261", bg: "rgba(244,162,97,0.08)",  border: "rgba(244,162,97,0.3)" }
+    : { label: "Not Detected",  color: "#D64545", bg: "rgba(214,69,69,0.08)",   border: "rgba(214,69,69,0.3)"  }
+
+  const onsetRatePct  = onsetRate !== null ? `${(onsetRate * 100).toFixed(0)}%` : "—"
+
+  function formatOnsetDate(raw: string | null): string {
+    if (!raw) return "—"
+    try { return new Date(raw).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) }
+    catch { return raw }
+  }
+
+  const onsetDescription =
+    liveStatus === "loading"
+      ? "Fetching onset data from the analysis backend…"
+      : onsetRate === null
+      ? "No onset data is currently available for this district."
+      : onsetRate >= 0.8
+      ? `Rainfall onset has been consistently detected in ${onsetRatePct} of analyzed seasons. Latest confirmed onset was ${formatOnsetDate(latestOnsetDate)}.`
+      : onsetRate >= 0.4
+      ? `Onset detected in ${onsetRatePct} of seasons — intermittent patterns observed. Latest onset: ${formatOnsetDate(latestOnsetDate)}.`
+      : `Onset detected in only ${onsetRatePct} of seasons. Rainfall onset remains unreliable for ${defaultDistrict}.`
 
   // Dynamic Banner Logic
   let bannerTitle = "Wait before planting."
@@ -237,7 +271,7 @@ export default function DashboardPage() {
     }
   } else if (foLevel === "LOW") {
     bannerTitle = "Favorable Planting Conditions."
-    bannerMessage = "Algorithm indicators show low risk of false-onset rains. Planting is currently recommended following optimal soil moisture."
+    bannerMessage = "Algorithm indicators show low risk of false-onset rains. Planting currently recommended following detected optimal window."
     bannerTheme = {
       badgeBg: "rgba(31,122,99,0.22)", badgeColor: "#1F7A63",
       iconBg: "rgba(31,122,99,0.22)", iconBorder: "rgba(31,122,99,0.4)"
@@ -324,25 +358,59 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex flex-col items-center space-y-4">
-            {/* Sun ring icon */}
+            {/* Sun ring icon — tinted to status colour */}
             <div
               className="flex h-[72px] w-[72px] items-center justify-center rounded-full transition-all duration-300 group-hover:scale-105"
-              style={{ background: "#f0f4f8" }}
+              style={{ background: liveStatus === "loading" ? "#f0f4f8" : `${onsetStatus.color}15` }}
             >
-              <SunRingIcon />
+              {liveStatus === "loading" ? (
+                <div className="h-8 w-8 rounded-full border-4 animate-spin"
+                  style={{ borderColor: "#e2e8f0", borderTopColor: "#1F7A63" }} />
+              ) : (
+                <SunRingIcon />
+              )}
             </div>
 
-            {/* Status badge */}
+            {/* Live status badge */}
             <span
               className="inline-block rounded-full px-4 py-1.5 text-[13px] font-bold"
-              style={{ color: "#D64545", background: "rgba(214,69,69,0.08)", border: "1.5px solid rgba(214,69,69,0.25)" }}
+              style={{ color: onsetStatus.color, background: onsetStatus.bg, border: `1.5px solid ${onsetStatus.border}` }}
             >
-              Not Started
+              {onsetStatus.label}
             </span>
 
-            <p className="text-center text-[13px] leading-[1.6] text-[#6b7a8d]">
-              The main rains have not consistently begun. Scattered showers are expected but do
-              not signal the season start.
+            {/* Detection rate progress bar */}
+            {onsetRate !== null && (
+              <div className="w-full px-1">
+                <div className="mb-1 flex justify-between">
+                  <span className="text-[11px] text-[#6b7a8d]">Detection rate</span>
+                  <span className="text-[11px] font-bold" style={{ color: onsetStatus.color }}>{onsetRatePct}</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#f0f4f8]">
+                  <div
+                    className="h-full rounded-full transition-all duration-1000 ease-in-out"
+                    style={{ width: onsetRatePct, background: onsetStatus.color, boxShadow: `0 0 6px ${onsetStatus.color}70` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Dates row */}
+            {latestOnsetDate && (
+              <div className="w-full grid grid-cols-2 gap-2 text-center">
+                <div className="rounded-lg px-2 py-1.5" style={{ background: "#f0f4f8" }}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b7a8d]">First</p>
+                  <p className="text-[11px] font-bold text-[#0F2A3D] mt-0.5">{formatOnsetDate(firstOnsetDate)}</p>
+                </div>
+                <div className="rounded-lg px-2 py-1.5" style={{ background: "#f0f4f8" }}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6b7a8d]">Latest</p>
+                  <p className="text-[11px] font-bold text-[#0F2A3D] mt-0.5">{formatOnsetDate(latestOnsetDate)}</p>
+                </div>
+              </div>
+            )}
+
+            <p className="text-center text-[12.5px] leading-[1.6] text-[#6b7a8d]">
+              {onsetDescription}
             </p>
           </div>
         </div>
