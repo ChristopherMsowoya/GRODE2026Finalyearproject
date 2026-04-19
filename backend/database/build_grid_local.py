@@ -10,7 +10,7 @@ from shapely.ops import transform, unary_union
 from backend.database.supabase_client import get_supabase_client
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DISTRICTS_GEOJSON_PATH = (
     PROJECT_ROOT
     / "backend"

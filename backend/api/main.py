@@ -8,11 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.api.spatial import build_district_summaries, build_ta_summaries
+from backend.database.supabase_client import get_supabase_client, supabase_is_configured
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
 RESULTS_JSON_PATH = ALGORITHMS_OUTPUTS / "results.json"
+DISTRICT_CACHE_PATH = ALGORITHMS_OUTPUTS / "district_summary_cache.json"
+TA_CACHE_PATH = ALGORITHMS_OUTPUTS / "ta_summary_cache.json"
 SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
 
 if str(ALGORITHMS_SRC) not in sys.path:
@@ -61,6 +64,16 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/database/health")
+def database_health_check():
+    if not supabase_is_configured():
+        raise HTTPException(status_code=503, detail="Supabase is not configured.")
+
+    client = get_supabase_client()
+    response = client.table("grid_cells").select("id", count="exact").limit(1).execute()
+    return {"status": "ok", "grid_cell_count": response.count}
+
+
 @app.get("/api/results")
 def get_results():
     return load_results()
@@ -97,6 +110,17 @@ def get_boundaries(level: str, simplified: bool = Query(default=True)):
 
 @app.get("/api/results/summary")
 def get_results_summary():
+    if not RESULTS_JSON_PATH.exists():
+        return {
+            "result_count": 0,
+            "seasons_analyzed": 0,
+            "risk_counts": {"Low": 0, "Medium": 0, "High": 0},
+            "average_false_onset_probability": 0.0,
+            "average_crop_stress_probability": 0.0,
+            "highest_risk_cells": [],
+            "pipeline_status": "not_run",
+        }
+
     results = load_results()
 
     risk_counts = Counter(result["overall_risk_level"] for result in results)
@@ -130,26 +154,104 @@ def get_results_summary():
         "average_false_onset_probability": average_false_onset_probability,
         "average_crop_stress_probability": average_crop_stress_probability,
         "highest_risk_cells": highest_risk_cells,
+        "pipeline_status": "complete",
     }
 
 
 @app.get("/api/results/district-summary")
 def get_district_summary():
-    district_summaries = build_district_summaries()
+    if not RESULTS_JSON_PATH.exists():
+        return {"district_count": 0, "districts": [], "pipeline_status": "not_run"}
 
+    # Use disk cache — always serve it if the cache file exists and has districts
+    if DISTRICT_CACHE_PATH.exists():
+        try:
+            cached = json.loads(DISTRICT_CACHE_PATH.read_text(encoding="utf-8"))
+            districts = cached.get("districts", [])
+            if districts:  # cache is populated
+                return {
+                    "district_count": len(districts),
+                    "districts": districts,
+                    "pipeline_status": "complete",
+                }
+        except Exception:
+            pass
+
+    # Cache miss — run spatial join and save
+    results_mtime = RESULTS_JSON_PATH.stat().st_mtime
+    district_summaries = build_district_summaries()
+    DISTRICT_CACHE_PATH.write_text(
+        json.dumps({"results_mtime": str(results_mtime), "districts": district_summaries}, default=str),
+        encoding="utf-8",
+    )
     return {
         "district_count": len(district_summaries),
         "districts": district_summaries,
+        "pipeline_status": "complete",
     }
 
 
 @app.get("/api/results/ta-summary")
 def get_ta_summary():
-    ta_summaries = build_ta_summaries()
+    if not RESULTS_JSON_PATH.exists():
+        return {"traditional_authority_count": 0, "traditional_authorities": [], "pipeline_status": "not_run"}
 
+    if TA_CACHE_PATH.exists():
+        try:
+            cached = json.loads(TA_CACHE_PATH.read_text(encoding="utf-8"))
+            tas = cached.get("traditional_authorities", [])
+            if tas:
+                return {
+                    "traditional_authority_count": len(tas),
+                    "traditional_authorities": tas,
+                    "pipeline_status": "complete",
+                }
+        except Exception:
+            pass
+
+    ta_summaries = build_ta_summaries()
+    TA_CACHE_PATH.write_text(
+        json.dumps({"results_mtime": results_mtime, "traditional_authorities": ta_summaries}, default=str),
+        encoding="utf-8",
+    )
     return {
         "traditional_authority_count": len(ta_summaries),
         "traditional_authorities": ta_summaries,
+        "pipeline_status": "complete",
+    }
+
+
+@app.get("/api/grid/ta-counts")
+def get_ta_grid_counts():
+    if not supabase_is_configured():
+        raise HTTPException(status_code=503, detail="Supabase is not configured.")
+
+    client = get_supabase_client()
+    response = client.rpc("get_ta_grid_counts").execute()
+    rows = response.data or []
+
+    return {
+        "traditional_authority_count": len(rows),
+        "traditional_authorities": rows,
+    }
+
+
+@app.get("/api/locations/search")
+def search_locations(name: str = Query(min_length=2), limit: int = Query(default=10, le=50)):
+    if not supabase_is_configured():
+        raise HTTPException(status_code=503, detail="Supabase is not configured.")
+
+    client = get_supabase_client()
+    response = client.rpc(
+        "search_locations",
+        {"name_query": name, "result_limit": limit},
+    ).execute()
+    rows = response.data or []
+
+    return {
+        "query": name,
+        "match_count": len(rows),
+        "locations": rows,
     }
 
 

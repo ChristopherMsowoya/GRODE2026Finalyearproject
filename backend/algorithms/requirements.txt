@@ -7,3 +7,4 @@ netcdf4
 supabase
 python-dotenv
 pyproj
+pyshp

@@ -3,16 +3,23 @@
 import { useEffect, useRef, useState } from "react"
 import { useUser } from "@/lib/user-context"
 import { getDistrictData } from "@/lib/district-data"
-import { CalendarDays, BarChart2, AlertCircle, ChevronDown, X } from "lucide-react"
+import { CalendarDays, BarChart2, AlertCircle, ChevronDown, X, Wifi } from "lucide-react"
 import Image from "next/image"
 import type { DistrictEnvironmentalData } from "@/lib/district-data"
+import type { DistrictSummary } from "@/lib/algorithm-api"
 
 // ─── Timeline marker data ────────────────────────────────────────────────────
-function getMarkers(data: DistrictEnvironmentalData) {
+function getMarkers(data: DistrictEnvironmentalData, liveData?: DistrictSummary) {
+  const formatDate = (d?: string | null) => d ? d.split('T')[0].split(' ')[0] : null;
+
+  const p10Date = formatDate(liveData?.first_detected_onset_date) || data.rainfall.p10Date
+  const p90Date = formatDate(liveData?.latest_detected_onset_date) || data.rainfall.p90Date
+  const medianDate = data.rainfall.medianDate
+
   return [
-    { id: "p10",    pct: 12,  label: "EARLY (P10)",   date: data.rainfall.p10Date, color: "#1F7A63", size: "sm" as const },
-    { id: "median", pct: 50,  label: "MEDIAN ONSET",  date: data.rainfall.medianDate, color: "#0F2A3D", size: "lg" as const },
-    { id: "p90",    pct: 88,  label: "LATE (P90)",    date: data.rainfall.p90Date, color: "#d97706", size: "sm" as const },
+    { id: "p10",    pct: 12,  label: "EARLY (P10)",   date: p10Date, color: "#1F7A63", size: "sm" as const },
+    { id: "median", pct: 50,  label: "MEDIAN ONSET",  date: medianDate, color: "#0F2A3D", size: "lg" as const },
+    { id: "p90",    pct: 88,  label: "LATE (P90)",    date: p90Date, color: "#d97706", size: "sm" as const },
   ]
 }
 
@@ -138,23 +145,57 @@ export default function OnsetInfoPage() {
   const [selectedDistrict, setSelectedDistrict] = useState<string>("")
   const [showDistrictMenu, setShowDistrictMenu] = useState(false)
   const [districtData, setDistrictData] = useState<DistrictEnvironmentalData | null>(null)
+  const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
+  const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLiveData() {
+      try {
+        const { fetchDistrictSummary } = await import("@/lib/algorithm-api")
+        const res = await fetchDistrictSummary()
+        if (cancelled) return
+        if ((res as any).pipeline_status === "not_run") {
+          setLiveStatus("error")
+          return
+        }
+        setLiveDistrictData(res.districts)
+        setLiveStatus("live")
+      } catch (err) {
+        if (!cancelled) setLiveStatus("error")
+      }
+    }
+    loadLiveData()
+    return () => { cancelled = true }
+  }, [])
 
   // Set initial district from user profile if user is logged in
   useEffect(() => {
+    let defaultDistrict = "Lilongwe"
     if (user?.district) {
-      const data = getDistrictData(user.district)
-      setDistrictData(data)
-      setSelectedDistrict(data.district)
+      defaultDistrict = user.district
     }
-  }, [user])
+    
+    // Always initialize with a district (user's or fallback)
+    const data = getDistrictData(defaultDistrict)
+    setDistrictData(data)
+    
+    // Match API casing if it exists, otherwise use strictly what was provided
+    const match = liveDistrictData.find(d => d.district.toLowerCase() === defaultDistrict.toLowerCase())
+    setSelectedDistrict(match ? match.district : defaultDistrict)
+  }, [user, liveDistrictData])
 
   // Handle district change
   const handleDistrictChange = (district: string) => {
     const data = getDistrictData(district.toLowerCase())
     setDistrictData(data)
-    setSelectedDistrict(data.district)
+    setSelectedDistrict(district)
     setShowDistrictMenu(false)
   }
+
+  const availableDistricts = liveDistrictData.length > 0 
+    ? liveDistrictData.map(d => d.district).sort()
+    : ["Lilongwe", "Blantyre", "Dedza", "Zomba", "Mchinji", "Kasungu", "Mangochi", "Salima", "Nkhotakota"].sort()
 
   if (!districtData) {
     return (
@@ -177,12 +218,11 @@ export default function OnsetInfoPage() {
               className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#e2e8f0] bg-white hover:bg-[#f0f4f8] transition-colors"
             >
               <span className="text-[13px] font-medium text-[#1a2332]">Select District</span>
-              <ChevronDown className="h-4 w-4 text-[#6b7a8d]" />
             </button>
 
             {showDistrictMenu && (
               <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-lg bg-white border border-[#e2e8f0] shadow-lg max-h-64 overflow-y-auto">
-                {["Lilongwe", "Blantyre", "Dedza", "Zomba", "Mchinji", "Kasungu", "Mangochi", "Salima", "Nkhotakota"].map((district) => (
+                {availableDistricts.map((district) => (
                   <button
                     key={district}
                     onClick={() => handleDistrictChange(district)}
@@ -207,7 +247,10 @@ export default function OnsetInfoPage() {
     )
   }
 
-  const markers = getMarkers(districtData)
+
+
+  const liveSelectedDistrict = liveDistrictData.find(d => d.district === selectedDistrict)
+  const markers = getMarkers(districtData, liveSelectedDistrict)
   const optimalStart = markers[0].date
   const optimalEnd = markers[2].date
 
@@ -217,12 +260,19 @@ export default function OnsetInfoPage() {
       {/* ── Page title with district selector ───────────────────────────── */}
       <div className="flex items-start justify-between">
         <div>
-          <h1
-            className="text-[36px] font-extrabold tracking-tight leading-tight"
-            style={{ color: "#0F2A3D" }}
-          >
-            Rainfall Onset Forecast
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1
+              className="text-[36px] font-extrabold tracking-tight leading-tight"
+              style={{ color: "#0F2A3D" }}
+            >
+              Rainfall Onset Forecast
+            </h1>
+            {liveStatus === "live" && liveSelectedDistrict && (
+              <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1 rounded-full">
+                <Wifi className="h-3 w-3" /> Live Data
+              </span>
+            )}
+          </div>
           <p className="text-[14px] text-[#6b7a8d] mt-1">for {selectedDistrict}</p>
         </div>
         
@@ -238,7 +288,7 @@ export default function OnsetInfoPage() {
 
           {showDistrictMenu && (
             <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-lg bg-white border border-[#e2e8f0] shadow-lg max-h-64 overflow-y-auto">
-              {["Lilongwe", "Blantyre", "Dedza", "Zomba", "Mchinji", "Kasungu", "Mangochi", "Salima", "Nkhotakota"].map((district) => (
+              {availableDistricts.map((district) => (
                 <button
                   key={district}
                   onClick={() => handleDistrictChange(district)}
@@ -254,24 +304,7 @@ export default function OnsetInfoPage() {
         </div>
       </div>
 
-      {/* ── Info banner ──────────────────────────────────────────────────── */}
-      <div
-        className="px-5 py-4"
-        style={{
-          background:  "#DFF5E3",
-          borderLeft:  "4px solid #2E8B57",
-          borderRadius: "4px",
-        }}
-      >
-        <p className="text-[15px] font-medium leading-relaxed" style={{ color: "#1B5E20" }}>
-          Rainfall: <strong>{districtData.rainfall.totalMM}mm</strong> | 
-          Temperature: <strong>{districtData.temperature.current}°C</strong> | 
-          Soil Moisture: <strong>{districtData.soilMoisture.level}%</strong>
-        </p>
-        <p className="text-[14px] font-medium leading-relaxed mt-2" style={{ color: "#1B5E20" }}>
-          This shows when rains usually start in {selectedDistrict}. Use this data to plan your planting season effectively.
-        </p>
-      </div>
+
 
       {/* ── Seasonal Timeline card ────────────────────────────────────────── */}
       <div

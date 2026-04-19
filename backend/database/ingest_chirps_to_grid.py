@@ -10,7 +10,7 @@ from backend.algorithms.src.ingestion.chirps_loader import normalize_chirps_data
 from backend.database.supabase_client import get_supabase_client
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_DATA_DIR = PROJECT_ROOT / "backend" / "algorithms" / "data" / "raw"
 BATCH_SIZE = 1000
 

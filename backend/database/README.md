@@ -61,4 +61,10 @@ python -m backend.database.build_grid_local
 python -m backend.database.ingest_chirps_to_grid 2022
 ```
 
-4. Add a script that writes algorithm outputs into `grid_risk_results`.
+4. Load populated places into the `locations` table:
+
+```powershell
+python -m backend.database.import_locations
+```
+
+5. Add a script that writes algorithm outputs into `grid_risk_results`.

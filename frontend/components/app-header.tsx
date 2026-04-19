@@ -176,23 +176,12 @@ export function AppHeader() {
       {/* Left */}
       <div className="flex items-center gap-2 sm:gap-3 md:gap-10">
         <MobileSidebar />
-        <span className="text-[15px] sm:text-[17px] font-bold tracking-tight hidden sm:block" style={{ color: "#0F2A3D" }}>
-          GRODE MW
-        </span>
-        {/* Role indicator (Hidden on mobile & tablet, visible on desktop and up) */}
-        <nav className="hidden lg:flex items-center gap-3 rounded-full bg-[#f0f4f8] p-1.5 px-2">
-          {(["farmer", "expert"] as const).map((mode) => (
-            <div
-              key={mode}
-              className={cn(
-                "rounded-full px-5 py-1.5 text-[13px] font-semibold transition-all duration-200 capitalize select-none",
-                activeMode === mode ? "bg-white text-[#0F2A3D] shadow-sm" : "text-[#6b7a8d]"
-              )}
-            >
-              {mode === "farmer" ? "Farmer" : "Expert"}
-            </div>
-          ))}
-        </nav>
+        <div className="hidden sm:flex items-center gap-3">
+          <span className="text-[15px] sm:text-[17px] font-bold tracking-tight" style={{ color: "#0F2A3D" }}>
+            GRODE MW
+          </span>
+        </div>
+
       </div>
 
       {/* Right */}

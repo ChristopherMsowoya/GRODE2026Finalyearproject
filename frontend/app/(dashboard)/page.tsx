@@ -1,9 +1,11 @@
 "use client"
 
-import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight } from "lucide-react"
+import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight, Wifi } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 import { useState, useEffect } from "react"
+import { useUser } from "@/lib/user-context"
+import { fetchDistrictSummary, type DistrictSummary } from "@/lib/algorithm-api"
 
 function SunRingIcon() {
   return (
@@ -174,6 +176,74 @@ function GuidanceSlideshow() {
 }
 
 export default function DashboardPage() {
+  const { user } = useUser()
+  const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
+  const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadData() {
+      try {
+        const res = await fetchDistrictSummary()
+        if (cancelled) return
+        if ((res as any).pipeline_status === "not_run") {
+          setLiveStatus("error")
+          return
+        }
+        setLiveDistrictData(res.districts)
+        setLiveStatus("live")
+      } catch {
+        if (!cancelled) setLiveStatus("error")
+      }
+    }
+    loadData()
+    return () => { cancelled = true }
+  }, [])
+
+  const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
+  const defaultDistrict = formatDistrict(user?.district)
+  const districtRiskData = liveDistrictData.find(d => d.district === defaultDistrict)
+
+  const foProb = districtRiskData ? (districtRiskData.overall_risk_probability || 0) : 0.90
+  const foLevel = foProb > 0.6 ? "HIGH" : foProb > 0.3 ? "MED" : "LOW"
+  const foColor = foProb > 0.6 ? "#D64545" : foProb > 0.3 ? "#F4A261" : "#1F7A63"
+  const foPercent = (foProb * 100).toFixed(0) + "%"
+
+  let foMessage = `There is an elevated ${foPercent} probability that initial rains will be followed by at least a 10-day dry spell, which is highly destructive to seedlings.`
+  if (foLevel === "LOW") {
+    foMessage = `With a minimal probability (${foPercent}) of prolonged dry spells, the rains are predicted to be consistent enough to support healthy seedling emergence.`
+  } else if (foLevel === "MED") {
+    foMessage = `There is a moderate ${foPercent} probability of intermittent dry spells. Farmers should ensure resilient crop varieties or supplementary water availability.`
+  }
+
+  const csProb = districtRiskData ? (districtRiskData.average_crop_stress_probability || 0) : 0.45
+  const csLevel = csProb > 0.6 ? "HIGH" : csProb > 0.3 ? "MED" : "LOW"
+  const csColor = csProb > 0.6 ? "#D64545" : csProb > 0.3 ? "#F4A261" : "#1F7A63"
+
+  // Dynamic Banner Logic
+  let bannerTitle = "Wait before planting."
+  let bannerMessage = "Current indicators suggest high risk of false-onset rains. Planting now may result in total crop loss during the upcoming dry spell."
+  let bannerTheme = {
+    badgeBg: "rgba(244,162,97,0.22)", badgeColor: "#F4A261",
+    iconBg: "rgba(214,69,69,0.22)", iconBorder: "rgba(214,69,69,0.4)"
+  }
+
+  if (foLevel === "MED") {
+    bannerTitle = "Proceed with Caution."
+    bannerMessage = "There is a moderate risk of false-onset rains. Ensure you have access to supplementary water if dry spells occur."
+    bannerTheme = {
+      badgeBg: "rgba(244,162,97,0.22)", badgeColor: "#F4A261",
+      iconBg: "rgba(244,162,97,0.22)", iconBorder: "rgba(244,162,97,0.4)"
+    }
+  } else if (foLevel === "LOW") {
+    bannerTitle = "Favorable Planting Conditions."
+    bannerMessage = "Algorithm indicators show low risk of false-onset rains. Planting is currently recommended following optimal soil moisture."
+    bannerTheme = {
+      badgeBg: "rgba(31,122,99,0.22)", badgeColor: "#1F7A63",
+      iconBg: "rgba(31,122,99,0.22)", iconBorder: "rgba(31,122,99,0.4)"
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-full">
 
@@ -196,29 +266,44 @@ export default function DashboardPage() {
             {/* Badge */}
             <span
               className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[11px] font-bold uppercase tracking-widest"
-              style={{ background: "rgba(244,162,97,0.22)", color: "#F4A261", border: "1px solid rgba(244,162,97,0.4)" }}
+              style={{ background: bannerTheme.badgeBg, color: bannerTheme.badgeColor, border: `1px solid ${bannerTheme.badgeColor}66` }}
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-[#F4A261] pulse-dot inline-block" />
+              <span className="h-1.5 w-1.5 rounded-full pulse-dot inline-block" style={{ backgroundColor: bannerTheme.badgeColor }} />
               Urgent Guidance
             </span>
 
             <h1 className="text-4xl font-extrabold text-white leading-tight tracking-tight drop-shadow-md">
-              Wait before planting.
+              {bannerTitle}
             </h1>
-            <p className="text-[15px] text-white/80 leading-relaxed font-medium">
-              Current indicators suggest high risk of false-onset rains.<br />
-              Planting now may result in total crop loss during the upcoming dry spell.
+            <p className="text-[15px] text-white/80 leading-relaxed font-medium max-w-xl">
+              {bannerMessage}
             </p>
           </div>
 
           {/* Warning Icon */}
           <div
             className="hidden sm:flex h-[88px] w-[88px] flex-shrink-0 items-center justify-center rounded-full md:ml-8"
-            style={{ background: "rgba(214,69,69,0.22)", border: "1px solid rgba(214,69,69,0.4)", backdropFilter: "blur(8px)" }}
+            style={{ background: bannerTheme.iconBg, border: `1px solid ${bannerTheme.iconBorder}`, backdropFilter: "blur(8px)" }}
           >
-            <AlertTriangle className="h-11 w-11 text-[#F4A261]" />
+            <AlertTriangle className="h-11 w-11" style={{ color: bannerTheme.badgeColor }} />
           </div>
         </div>
+      </div>
+
+      {/* ─── API Statistics Layout ─────────────────────────────────────── */}
+      <div className="flex items-center gap-4 text-[13px] text-[#6b7a8d] font-medium px-1">
+        <div className="flex items-center gap-1.5">
+          <div className={`h-2 w-2 rounded-full ${liveStatus === "live" ? "bg-[#1F7A63] animate-pulse" : "bg-[#6b7a8d]"}`} />
+          <span>{liveStatus === "live" ? "Algorithms Live" : "Analyzing Models..."}</span>
+        </div>
+        <span className="opacity-40">|</span>
+        <span>
+          <strong className="text-[#0F2A3D]">{districtRiskData?.grid_cell_count || 128}</strong> Grids Analyzed
+        </span>
+        <span className="opacity-40">|</span>
+        <span>
+          <strong className="text-[#0F2A3D]">{districtRiskData?.seasons_analyzed || 40}</strong> Seasons Validated
+        </span>
       </div>
 
       {/* ─── Metric Cards ──────────────────────────────────────────────── */}
@@ -231,7 +316,7 @@ export default function DashboardPage() {
         >
           <div className="mb-5 flex items-center justify-between">
             <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">
-              Onset Status
+              Onset Status ({defaultDistrict})
             </span>
             <button className="rounded-full p-1 text-[#6b7a8d] transition-colors hover:text-[#0F2A3D] hover:bg-[#f0f4f8]">
               <Info className="h-4 w-4" />
@@ -267,38 +352,39 @@ export default function DashboardPage() {
           className="card-hover rounded-2xl bg-white p-6"
           style={{
             boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)",
-            borderLeft: "4px solid #D64545",
+            borderLeft: `4px solid ${foColor}`,
           }}
         >
           <div className="mb-5 flex items-center justify-between">
             <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">
-              False-Onset Risk
+              False-Onset Risk ({defaultDistrict})
             </span>
             <span
-              className="flex h-6 w-6 items-center justify-center rounded-full text-[13px] font-bold"
-              style={{ color: "#D64545", background: "rgba(214,69,69,0.1)" }}
+              className="flex h-6 w-6 items-center justify-center rounded-full text-[13px] font-bold text-white bg-opacity-90"
+              style={{ background: foColor }}
             >
               !
             </span>
           </div>
 
           <div className="space-y-4">
-            <h2 className="text-[42px] font-black leading-none tracking-tight" style={{ color: "#D64545" }}>
-              HIGH
+            <h2 className="text-[42px] font-black leading-none tracking-tight" style={{ color: foColor }}>
+              {foLevel}
             </h2>
 
             {/* Progress bar */}
             <div>
               <div className="mb-1.5 flex justify-between items-center">
                 <span className="text-[11px] text-[#6b7a8d]">Risk level</span>
-                <span className="text-[11px] font-bold text-[#D64545]">90%</span>
+                <span className="text-[11px] font-bold" style={{ color: foColor }}>{foPercent}</span>
               </div>
               <div className="h-2 w-full overflow-hidden rounded-full bg-[#f0f4f8]">
                 <div
-                  className="h-full rounded-full progress-bar-fill"
+                  className="h-full rounded-full transition-all duration-1000 ease-in-out"
                   style={{
-                    width: "90%",
-                    background: "linear-gradient(to right, #1F7A63, #F4A261 55%, #D64545)",
+                    width: foPercent,
+                    background: foColor,
+                    boxShadow: `0 0 8px ${foColor}80`
                   }}
                 />
               </div>
@@ -307,8 +393,7 @@ export default function DashboardPage() {
             <div>
               <h3 className="mb-1.5 text-[13px] font-bold text-[#1a2332]">What this means</h3>
               <p className="text-[13px] leading-[1.6] text-[#6b7a8d]">
-                There is a 90% probability that initial rains will be followed by atleast 10-day dry
-                spell, which is destructive to seedlings.
+                {foMessage}
               </p>
             </div>
           </div>
@@ -317,11 +402,11 @@ export default function DashboardPage() {
         {/* Crop Stress Risk */}
         <div
           className="card-hover rounded-2xl bg-white p-6"
-          style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)" }}
+          style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)", borderLeft: `4px solid ${csColor}` }}
         >
           <div className="mb-5 flex items-center justify-between">
             <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">
-              Crop Stress Risk
+              Crop Stress Risk ({defaultDistrict})
             </span>
             <button className="rounded-full p-1 text-[#6b7a8d] transition-colors hover:text-[#0F2A3D] hover:bg-[#f0f4f8]">
               <HelpCircle className="h-4 w-4" />
@@ -330,29 +415,28 @@ export default function DashboardPage() {
 
           <div className="mb-4 flex items-start justify-between">
             <div>
-              <h2 className="text-[42px] font-black leading-none tracking-tight text-[#1a2332]">
-                MED
+              <h2 className="text-[42px] font-black leading-none tracking-tight" style={{ color: csColor }}>
+                {csLevel}
               </h2>
               <span
                 className="mt-1 inline-block text-[11.5px] font-bold uppercase tracking-wide"
-                style={{ color: "#F4A261" }}
+                style={{ color: csColor }}
               >
-                ↑ INCREASING
+                {csLevel === "HIGH" ? "↑ SEVERE" : csLevel === "MED" ? "↑ INCREASING" : "↓ LOW"}
               </span>
             </div>
             <div
               className="flex h-14 w-14 items-center justify-center rounded-xl"
-              style={{ background: "rgba(244,162,97,0.12)" }}
+              style={{ background: `${csColor}15` }}
             >
-              <Tractor className="h-7 w-7" style={{ color: "#F4A261" }} />
+              <Tractor className="h-7 w-7" style={{ color: csColor }} />
             </div>
           </div>
 
           <div>
             <h3 className="mb-1.5 text-[13px] font-bold text-[#1a2332]">What this means</h3>
             <p className="text-[13px] leading-[1.6] text-[#6b7a8d]">
-              Rising soil temperatures and low moisture levels are creating stress for early
-              suitable crops and land preparation.
+              {csLevel === "HIGH" ? "Critical soil temperatures and low moisture." : csLevel === "MED" ? "Rising soil temperatures and low moisture levels." : "Favorable conditions for early crop stages."}
             </p>
           </div>
         </div>
@@ -375,7 +459,7 @@ export default function DashboardPage() {
           <div className="absolute bottom-0 left-0 right-0 p-5">
             <h3 className="text-[16px] font-bold text-white">Regional Soil Moisture</h3>
             <p className="mt-0.5 text-[12.5px] text-white/70">
-              Real-time satellite tracking of Lilongwe central plains
+              Real-time satellite tracking of {defaultDistrict}
             </p>
           </div>
         </div>

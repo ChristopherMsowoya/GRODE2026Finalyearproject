@@ -65,6 +65,39 @@ export interface TraditionalAuthoritySummaryResponse {
   traditional_authorities: TraditionalAuthoritySummary[]
 }
 
+export interface DatabaseHealthResponse {
+  status: string
+  grid_cell_count: number
+}
+
+export interface TraditionalAuthorityGridCount {
+  traditional_authority: string
+  district: string | null
+  grid_cell_count: number
+}
+
+export interface TraditionalAuthorityGridCountResponse {
+  traditional_authority_count: number
+  traditional_authorities: TraditionalAuthorityGridCount[]
+}
+
+export interface LocationSearchResult {
+  location_name: string
+  district: string | null
+  traditional_authority: string | null
+  grid_id: string | null
+  longitude: number
+  latitude: number
+  place_type: string | null
+  population: string | null
+}
+
+export interface LocationSearchResponse {
+  query: string
+  match_count: number
+  locations: LocationSearchResult[]
+}
+
 export interface GeoJsonFeature {
   type: string
   properties: Record<string, string | number | boolean | null>
@@ -86,6 +119,7 @@ const boundaryCache = new Map<string, Promise<GeoJsonFeatureCollection>>()
 const districtSummaryCache = new Map<string, Promise<DistrictSummaryResponse>>()
 const algorithmSummaryCache = new Map<string, Promise<AlgorithmSummary>>()
 const taSummaryCache = new Map<string, Promise<TraditionalAuthoritySummaryResponse>>()
+const taGridCountCache = new Map<string, Promise<TraditionalAuthorityGridCountResponse>>()
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -132,13 +166,8 @@ export function fetchAlgorithmSummary() {
 }
 
 export function fetchDistrictSummary() {
-  const key = "district-summary"
-
-  if (!districtSummaryCache.has(key)) {
-    districtSummaryCache.set(key, apiFetch<DistrictSummaryResponse>("/api/results/district-summary"))
-  }
-
-  return districtSummaryCache.get(key)!
+  // Always fetch fresh -- results update whenever pipeline runs
+  return apiFetch<DistrictSummaryResponse>("/api/results/district-summary")
 }
 
 export function fetchTraditionalAuthoritySummary() {
@@ -149,6 +178,29 @@ export function fetchTraditionalAuthoritySummary() {
   }
 
   return taSummaryCache.get(key)!
+}
+
+export function fetchDatabaseHealth() {
+  return apiFetch<DatabaseHealthResponse>("/api/database/health")
+}
+
+export function fetchTraditionalAuthorityGridCounts() {
+  const key = "ta-grid-counts"
+
+  if (!taGridCountCache.has(key)) {
+    taGridCountCache.set(key, apiFetch<TraditionalAuthorityGridCountResponse>("/api/grid/ta-counts"))
+  }
+
+  return taGridCountCache.get(key)!
+}
+
+export function searchLocations(name: string, limit = 10) {
+  const params = new URLSearchParams({
+    name,
+    limit: String(limit),
+  })
+
+  return apiFetch<LocationSearchResponse>(`/api/locations/search?${params.toString()}`)
 }
 
 export function triggerPipelineRun(region = "malawi") {
@@ -183,4 +235,5 @@ export function invalidateAlgorithmCaches() {
   algorithmSummaryCache.clear()
   districtSummaryCache.clear()
   taSummaryCache.clear()
+  taGridCountCache.clear()
 }

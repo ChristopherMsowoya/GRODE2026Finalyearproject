@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import dynamic from "next/dynamic"
-import { Droplets, Thermometer, ZoomIn, ZoomOut, ChevronDown, X, MapPin } from "lucide-react"
+import { Droplets, Thermometer, ZoomIn, ZoomOut, ChevronDown, X, MapPin, Wifi } from "lucide-react"
 import { useUser } from "@/lib/user-context"
+import type { DistrictSummary } from "@/lib/algorithm-api"
 import malawiDistrictsData from "../../../lib/data/malawiDistricts.json"
 import malawiAdministrativeData from "../../../lib/data/malawiAdministrativeData.json"
 
@@ -68,149 +69,46 @@ interface LocationData {
 function LocationSelector({
   selectedLocation,
   onLocationChange,
-  onClose
+  onClose,
+  liveDistricts
 }: {
   selectedLocation: LocationData
   onLocationChange: (location: LocationData) => void
   onClose: () => void
+  liveDistricts?: string[]
 }) {
-  const [step, setStep] = useState<'district' | 'ta' | 'area'>('district')
-  const [tempLocation, setTempLocation] = useState<LocationData>(selectedLocation)
-
-  const districts = malawiAdministrativeData.districts.map(d => d.name)
-
-  const getTraditionalAuthorities = (districtName: string) => {
-    const district = malawiAdministrativeData.districts.find(d => d.name === districtName)
-    return district ? district.traditionalAuthorities.map(ta => ta.name) : []
-  }
-
-  const getAreas = (districtName: string, taName: string) => {
-    const district = malawiAdministrativeData.districts.find(d => d.name === districtName)
-    const ta = district?.traditionalAuthorities.find(t => t.name === taName)
-    return ta ? ta.areas.map(a => a.name) : []
-  }
+  const defaultDistricts = malawiAdministrativeData.districts.map(d => d.name)
+  const districts = liveDistricts && liveDistricts.length > 0 ? liveDistricts : defaultDistricts
 
   const handleDistrictSelect = (district: string) => {
-    setTempLocation({ district, traditionalAuthority: null, area: null })
-    setStep('ta')
-  }
-
-  const handleTASelect = (ta: string) => {
-    setTempLocation(prev => ({ ...prev, traditionalAuthority: ta, area: null }))
-    setStep('area')
-  }
-
-  const handleAreaSelect = (area: string) => {
-    setTempLocation(prev => ({ ...prev, area }))
-    onLocationChange({ ...tempLocation, area })
+    onLocationChange({ district, traditionalAuthority: null, area: null })
     onClose()
   }
 
-  const handleBack = () => {
-    if (step === 'area') setStep('ta')
-    else if (step === 'ta') setStep('district')
-  }
-
-  const handleReset = () => {
-    setTempLocation({ district: null, traditionalAuthority: null, area: null })
-    setStep('district')
-  }
-
   return (
-    <div className="absolute top-full left-0 mt-2 w-80 bg-white rounded-[12px] shadow-lg border border-[#e2e8f0] z-50">
-      <div className="p-4 border-b border-[#e2e8f0]">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[#0F2A3D]">Select Location</h3>
-          <button onClick={onClose} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        {tempLocation.district && (
-          <div className="mt-2 flex items-center gap-1 text-xs text-[#6b7a8d]">
-            <span>{tempLocation.district}</span>
-            {tempLocation.traditionalAuthority && (
-              <>
-                <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                <span>{tempLocation.traditionalAuthority}</span>
-                {tempLocation.area && (
-                  <>
-                    <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                    <span>{tempLocation.area}</span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
+    <div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-[12px] shadow-lg border border-[#e2e8f0] z-50">
+      <div className="p-4 border-b border-[#e2e8f0] flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[#0F2A3D]">Select District</h3>
+        <button onClick={onClose} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
+          <X className="h-4 w-4" />
+        </button>
       </div>
 
-      <div className="max-h-64 overflow-y-auto">
-        {step === 'district' && (
-          <div className="p-2">
-            <div className="text-xs font-medium text-[#6b7a8d] mb-2 px-2">Select District</div>
-            {districts.map(district => (
-              <button
-                key={district}
-                onClick={() => handleDistrictSelect(district)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#f8fafb] rounded-md transition-colors"
-              >
-                {district}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {step === 'ta' && tempLocation.district && (
-          <div className="p-2">
-            <div className="flex items-center gap-2 mb-2 px-2">
-              <button onClick={handleBack} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-                ←
-              </button>
-              <div className="text-xs font-medium text-[#6b7a8d]">Select Traditional Authority</div>
-            </div>
-            {getTraditionalAuthorities(tempLocation.district).map(ta => (
-              <button
-                key={ta}
-                onClick={() => handleTASelect(ta)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#f8fafb] rounded-md transition-colors"
-              >
-                {ta}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {step === 'area' && tempLocation.district && tempLocation.traditionalAuthority && (
-          <div className="p-2">
-            <div className="flex items-center gap-2 mb-2 px-2">
-              <button onClick={handleBack} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-                ←
-              </button>
-              <div className="text-xs font-medium text-[#6b7a8d]">Select Geographical Area</div>
-            </div>
-            {getAreas(tempLocation.district, tempLocation.traditionalAuthority).map(area => (
-              <button
-                key={area}
-                onClick={() => handleAreaSelect(area)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#f8fafb] rounded-md transition-colors"
-              >
-                {area}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {(tempLocation.district || tempLocation.traditionalAuthority || tempLocation.area) && (
-        <div className="p-3 border-t border-[#e2e8f0]">
+      <div className="max-h-64 overflow-y-auto p-2">
+        {districts.map(district => (
           <button
-            onClick={handleReset}
-            className="w-full text-center text-xs text-[#6b7a8d] hover:text-[#0F2A3D] py-1"
+            key={district}
+            onClick={() => handleDistrictSelect(district)}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+              selectedLocation.district === district 
+                ? "bg-[#eef2f4] font-semibold text-[#0F2A3D]" 
+                : "text-[#6b7a8d] hover:bg-[#f8fafb] hover:text-[#0F2A3D]"
+            }`}
           >
-            Reset Selection
+            {district}
           </button>
-        </div>
-      )}
+        ))}
+      </div>
     </div>
   )
 }
@@ -223,17 +121,49 @@ export default function CropStressPage() {
     area: null
   })
   const [showLocationSelector, setShowLocationSelector] = useState(false)
+  const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
+  const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
+
+  const handleDistrictDataLoad = useCallback((data: DistrictSummary[]) => {
+    setLiveDistrictData(data)
+    setLiveStatus("live")
+  }, [])
 
   // Set default to user's district on mount
   useEffect(() => {
-    if (user?.district && !selectedLocation.district) {
-      setSelectedLocation({ district: user.district, traditionalAuthority: null, area: null })
+    let defaultDistrict = "Lilongwe"
+    if (user?.district) {
+      const districtMap: Record<string, string> = {
+        lilongwe: "Lilongwe",
+        blantyre: "Blantyre",
+        dedza: "Dedza",
+        zomba: "Zomba",
+        mchinji: "Mchinji",
+        kasungu: "Kasungu",
+        mangochi: "Mangochi",
+        salima: "Salima",
+        nkhotakota: "Nkhotakota"
+      }
+      defaultDistrict = districtMap[user.district.toLowerCase()] || (user.district.charAt(0).toUpperCase() + user.district.slice(1).toLowerCase())
     }
-  }, [user?.district, selectedLocation.district])
+
+    if (!selectedLocation.district) {
+      setSelectedLocation({ 
+        district: defaultDistrict, 
+        traditionalAuthority: null, 
+        area: null 
+      })
+    }
+  }, [user?.district])
 
   const handleLocationChange = (location: LocationData) => {
     setSelectedLocation(location)
   }
+
+  // Find live data for selected district
+  const liveSelectedDistrict = selectedLocation.district
+    ? liveDistrictData.find(d => d.district === selectedLocation.district)
+    : null
 
   // Get data for selected area (most granular level)
   const getSelectedAreaData = () => {
@@ -293,31 +223,14 @@ export default function CropStressPage() {
                   selectedLocation={selectedLocation}
                   onLocationChange={handleLocationChange}
                   onClose={() => setShowLocationSelector(false)}
+                  liveDistricts={liveDistrictData.map(d => d.district).sort()}
                 />
               )}
             </div>
           </div>
         </div>
 
-        {/* Location Breadcrumb */}
-        {(selectedLocation.district || selectedLocation.traditionalAuthority || selectedLocation.area) && (
-          <div className="mt-4 flex items-center gap-2 text-sm text-[#6b7a8d]">
-            <MapPin className="h-4 w-4" />
-            <span className="font-medium text-[#0F2A3D]">{selectedLocation.district}</span>
-            {selectedLocation.traditionalAuthority && (
-              <>
-                <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                <span className="font-medium text-[#0F2A3D]">{selectedLocation.traditionalAuthority}</span>
-                {selectedLocation.area && (
-                  <>
-                    <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                    <span className="font-medium text-[#0F2A3D]">{selectedLocation.area}</span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
+
       </div>
 
       {/* Main Dashboard Grid */}
@@ -328,30 +241,84 @@ export default function CropStressPage() {
             selectedLocation={selectedLocation}
             onLocationChange={handleLocationChange}
             userDistrict={user?.district || ""}
+            onDistrictDataLoad={handleDistrictDataLoad}
           />
         </div>
 
         {/* Right Panel: Info Cards */}
         <div className="flex flex-col gap-5">
-          <InfoCard
-            title="Soil Moisture"
-            value={areaData?.soilMoisture || 58}
-            unit="%"
-            description={`Current soil moisture accumulation in ${selectedLocation.area || selectedLocation.traditionalAuthority || selectedLocation.district || user?.district || 'selected'} region.`}
-            icon={<Droplets className="h-5 w-5" style={{ color: "#0987a6" }} />}
-            trend="down"
-            trendValue="3% from last week"
-          />
+          {liveStatus === "live" && liveSelectedDistrict ? (
+            <>
+              <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1] flex flex-col justify-between" style={{ minHeight: "200px" }}>
+                <div>
+                  <div className="flex items-start justify-between mb-4">
+                    <h3 className="text-[14px] font-semibold text-[#6b7a8d] uppercase tracking-[0.24em]">Crop Stress Risk</h3>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: "#f0f4f8" }}>
+                      <Droplets className="h-5 w-5" style={{ color: "#0987a6" }} />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <p className="text-[32px] font-bold text-[#0d2f3f]">
+                      {(liveSelectedDistrict.average_crop_stress_probability * 100).toFixed(1)}
+                      <span className="text-[18px] font-semibold text-[#6b7a8d]">%</span>
+                    </p>
+                  </div>
+                  <p className="text-[12px] font-semibold" style={{ color: liveSelectedDistrict.overall_risk_level === 'High' ? '#e06060' : liveSelectedDistrict.overall_risk_level === 'Medium' ? '#f3b34c' : '#22c55e' }}>
+                    {liveSelectedDistrict.overall_risk_level === 'High' ? '↑ High' : liveSelectedDistrict.overall_risk_level === 'Medium' ? '→ Medium' : '↓ Low'} overall risk
+                  </p>
+                </div>
+                <p className="text-[13px] leading-relaxed text-[#6b7a8d]">Live crop stress probability for {selectedLocation.district} based on {liveSelectedDistrict.seasons_analyzed} seasons of CHIRPS rainfall analysis.</p>
+              </div>
 
-          <InfoCard
-            title="Heat Stress"
-            value={areaData ? (areaData.riskLevel === "alert" ? 32 : areaData.riskLevel === "caution" ? 27 : 22) : 27}
-            unit="°C"
-            description={`Average temperature and corresponding stress degree in ${selectedLocation.area || selectedLocation.traditionalAuthority || selectedLocation.district || user?.district || 'selected'} region.`}
-            icon={<Thermometer className="h-5 w-5" style={{ color: "#d97706" }} />}
-            trend="up"
-            trendValue="2°C above normal"
-          />
+              <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1] flex flex-col justify-between" style={{ minHeight: "200px" }}>
+                <div>
+                  <div className="flex items-start justify-between mb-4">
+                    <h3 className="text-[14px] font-semibold text-[#6b7a8d] uppercase tracking-[0.24em]">False-Onset Risk</h3>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: "#fff3e0" }}>
+                      <Thermometer className="h-5 w-5" style={{ color: "#d97706" }} />
+                    </div>
+                  </div>
+                  <div className="mb-3">
+                    <p className="text-[32px] font-bold text-[#0d2f3f]">
+                      {(liveSelectedDistrict.overall_risk_probability * 100).toFixed(1)}
+                      <span className="text-[18px] font-semibold text-[#6b7a8d]">%</span>
+                    </p>
+                  </div>
+                  <p className="text-[12px] font-semibold text-[#6b7a8d]">
+                    {liveSelectedDistrict.grid_cell_count} grid cells analysed
+                  </p>
+                </div>
+                <p className="text-[13px] leading-relaxed text-[#6b7a8d]">Live false-onset probability for {selectedLocation.district}. Onset detection rate: {(liveSelectedDistrict.onset_detection_rate * 100).toFixed(1)}%.</p>
+              </div>
+
+              <div className="flex items-center justify-center gap-2 rounded-full bg-[#f0fdf4] border border-[#bbf7d0] px-4 py-2">
+                <Wifi className="h-3.5 w-3.5 text-[#22c55e]" />
+                <span className="text-[11px] font-semibold text-[#16a34a]">Live data from GRODE backend</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <InfoCard
+                title="Soil Moisture"
+                value={areaData?.soilMoisture || 58}
+                unit="%"
+                description={`Current soil moisture accumulation in ${selectedLocation.area || selectedLocation.traditionalAuthority || selectedLocation.district || user?.district || 'selected'} region.`}
+                icon={<Droplets className="h-5 w-5" style={{ color: "#0987a6" }} />}
+                trend="down"
+                trendValue="3% from last week"
+              />
+
+              <InfoCard
+                title="Heat Stress"
+                value={areaData ? (areaData.riskLevel === "alert" ? 32 : areaData.riskLevel === "caution" ? 27 : 22) : 27}
+                unit="°C"
+                description={`Average temperature and corresponding stress degree in ${selectedLocation.area || selectedLocation.traditionalAuthority || selectedLocation.district || user?.district || 'selected'} region.`}
+                icon={<Thermometer className="h-5 w-5" style={{ color: "#d97706" }} />}
+                trend="up"
+                trendValue="2°C above normal"
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

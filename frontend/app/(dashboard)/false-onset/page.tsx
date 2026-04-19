@@ -1,18 +1,19 @@
-﻿"use client"
+"use client"
 
 import dynamic from "next/dynamic"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import type { LucideIcon } from "lucide-react"
-import { FileText, MapPin, Info, Droplets, Sprout, Bell, ChevronDown, X } from "lucide-react"
+import { FileText, MapPin, Info, Droplets, Sprout, Bell, ChevronDown, X, Wifi } from "lucide-react"
 import { useUser } from "../../../lib/user-context"
 import { getDistrictData } from "../../../lib/district-data"
 import type { DistrictEnvironmentalData } from "../../../lib/district-data"
+import type { DistrictSummary } from "../../../lib/algorithm-api"
 import malawiDistrictsData from "../../../lib/data/malawiDistricts.json"
 import malawiAdministrativeData from "../../../lib/data/malawiAdministrativeData.json"
 const FalseOnsetMap = dynamic(() => import("./false-onset-map"), { ssr: false })
 
-function RiskMeter({ riskLevel = "caution" }: { riskLevel?: string }) {
+function RiskMeter({ riskLevel = "caution", probability }: { riskLevel?: string, probability?: number }) {
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
@@ -20,8 +21,15 @@ function RiskMeter({ riskLevel = "caution" }: { riskLevel?: string }) {
     return () => clearTimeout(timer)
   }, [])
 
-  // Determine meter position and colors based on risk level
+  // Determine meter position and colors based on precise probability or fallback risk level
   const getRiskPosition = () => {
+    if (typeof probability === 'number') {
+      const percentage = Math.max(5, Math.min(95, probability * 100))
+      const color = riskLevel === 'alert' ? '#e36a6a' : riskLevel === 'caution' ? '#f2b24a' : '#9fd3a8'
+      const label = riskLevel === 'alert' ? 'High' : riskLevel === 'caution' ? 'Medium' : 'Low'
+      return { left: `${percentage}%`, color, label }
+    }
+
     switch (riskLevel) {
       case 'alert':
         return { left: "83.33%", color: "#e36a6a", label: "High" }
@@ -81,196 +89,49 @@ interface LocationData {
 function LocationSelector({
   selectedLocation,
   onLocationChange,
-  onClose
+  onClose,
+  liveDistricts
 }: {
   selectedLocation: LocationData
   onLocationChange: (location: LocationData) => void
   onClose: () => void
+  liveDistricts?: string[]
 }) {
-  const [step, setStep] = useState<'district' | 'ta' | 'area'>('district')
-  const [tempLocation, setTempLocation] = useState<LocationData>(selectedLocation)
-
-  const districts = malawiAdministrativeData.districts.map(d => d.name)
-
-  const getTraditionalAuthorities = (districtName: string) => {
-    const district = malawiAdministrativeData.districts.find(d => d.name === districtName)
-    return district ? district.traditionalAuthorities.map(ta => ta.name) : []
-  }
-
-  const getAreas = (districtName: string, taName: string) => {
-    const district = malawiAdministrativeData.districts.find(d => d.name === districtName)
-    const ta = district?.traditionalAuthorities.find(t => t.name === taName)
-    return ta ? ta.areas.map(a => a.name) : []
-  }
+  const defaultDistricts = malawiAdministrativeData.districts.map(d => d.name)
+  const districts = liveDistricts && liveDistricts.length > 0 ? liveDistricts : defaultDistricts
 
   const handleDistrictSelect = (district: string) => {
-    setTempLocation({ district, traditionalAuthority: null, area: null })
-    setStep('ta')
-  }
-
-  const handleTASelect = (ta: string) => {
-    setTempLocation(prev => ({ ...prev, traditionalAuthority: ta, area: null }))
-    setStep('area')
-  }
-
-  const handleAreaSelect = (area: string) => {
-    setTempLocation(prev => ({ ...prev, area }))
-    onLocationChange({ ...tempLocation, area })
+    onLocationChange({ district, traditionalAuthority: null, area: null })
     onClose()
   }
 
-  const handleBack = () => {
-    if (step === 'area') setStep('ta')
-    else if (step === 'ta') setStep('district')
-  }
-
-  const handleReset = () => {
-    setTempLocation({ district: null, traditionalAuthority: null, area: null })
-    setStep('district')
-  }
-
   return (
-    <div className="absolute top-full left-0 mt-2 w-80 bg-white rounded-[12px] shadow-lg border border-[#e2e8f0] z-50">
-      <div className="p-4 border-b border-[#e2e8f0]">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-[#0F2A3D]">Select Location</h3>
-          <button onClick={onClose} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        {tempLocation.district && (
-          <div className="mt-2 flex items-center gap-1 text-xs text-[#6b7a8d]">
-            <span>{tempLocation.district}</span>
-            {tempLocation.traditionalAuthority && (
-              <>
-                <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                <span>{tempLocation.traditionalAuthority}</span>
-                {tempLocation.area && (
-                  <>
-                    <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                    <span>{tempLocation.area}</span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="max-h-64 overflow-y-auto">
-        {step === 'district' && (
-          <div className="p-2">
-            <div className="text-xs font-medium text-[#6b7a8d] mb-2 px-2">Select District</div>
-            {districts.map(district => (
-              <button
-                key={district}
-                onClick={() => handleDistrictSelect(district)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#f8fafb] rounded-md transition-colors"
-              >
-                {district}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {step === 'ta' && tempLocation.district && (
-          <div className="p-2">
-            <div className="flex items-center gap-2 mb-2 px-2">
-              <button onClick={handleBack} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-                ←
-              </button>
-              <div className="text-xs font-medium text-[#6b7a8d]">Select Traditional Authority</div>
-            </div>
-            {getTraditionalAuthorities(tempLocation.district).map(ta => (
-              <button
-                key={ta}
-                onClick={() => handleTASelect(ta)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#f8fafb] rounded-md transition-colors"
-              >
-                {ta}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {step === 'area' && tempLocation.district && tempLocation.traditionalAuthority && (
-          <div className="p-2">
-            <div className="flex items-center gap-2 mb-2 px-2">
-              <button onClick={handleBack} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-                ←
-              </button>
-              <div className="text-xs font-medium text-[#6b7a8d]">Select Geographical Area</div>
-            </div>
-            {getAreas(tempLocation.district, tempLocation.traditionalAuthority).map(area => (
-              <button
-                key={area}
-                onClick={() => handleAreaSelect(area)}
-                className="w-full text-left px-3 py-2 text-sm hover:bg-[#f8fafb] rounded-md transition-colors"
-              >
-                {area}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {(tempLocation.district || tempLocation.traditionalAuthority || tempLocation.area) && (
-        <div className="p-3 border-t border-[#e2e8f0]">
-          <button
-            onClick={handleReset}
-            className="w-full text-center text-xs text-[#6b7a8d] hover:text-[#0F2A3D] py-1"
-          >
-            Reset Selection
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function RecommendationCard({ icon: Icon, title, text, iconBg, iconColor, hasButton }: { icon: LucideIcon; title: string; text: string; iconBg: string; iconColor: string; hasButton?: boolean }) {
-  const [notificationsEnabled, setNotificationsEnabled] = useState(false)
-
-  const handleEnableNotifications = () => {
-    setNotificationsEnabled(true)
-    // Here you would trigger the notification settings panel
-    alert("Notifications enabled! You will receive alerts for false-onset risk changes.")
-  }
-
-  return (
-    <div
-      className="rounded-[20px] bg-white p-6 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
-      style={{ boxShadow: "0 1px 10px -2px rgba(15,42,61,0.08), 0 0 0 1px #e2e8f0" }}
-    >
-      <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: iconBg }}>
-        <Icon className="h-5 w-5" style={{ color: iconColor }} />
-      </div>
-      <h3 className="text-[14.5px] font-bold text-[#0F2A3D] mb-2">{title}</h3>
-      <p className="text-[13px] leading-relaxed text-[#6b7a8d] mb-4">{text}</p>
-      {hasButton && (
-        <button
-          onClick={handleEnableNotifications}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-[#f2b24a] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#e6a43f] disabled:opacity-50"
-          disabled={notificationsEnabled}
-        >
-          <Bell className="h-4 w-4" />
-          {notificationsEnabled ? "Notifications Enabled" : "Enable Notifications"}
+    <div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-[12px] shadow-lg border border-[#e2e8f0] z-50">
+      <div className="p-4 border-b border-[#e2e8f0] flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[#0F2A3D]">Select District</h3>
+        <button onClick={onClose} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
+          <X className="h-4 w-4" />
         </button>
-      )}
+      </div>
+
+      <div className="max-h-64 overflow-y-auto p-2">
+        {districts.map(district => (
+          <button
+            key={district}
+            onClick={() => handleDistrictSelect(district)}
+            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+              selectedLocation.district === district 
+                ? "bg-[#eef2f4] font-semibold text-[#0F2A3D]" 
+                : "text-[#6b7a8d] hover:bg-[#f8fafb] hover:text-[#0F2A3D]"
+            }`}
+          >
+            {district}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
-
-const recommendations = [
-  {
-    icon: Bell,
-    iconBg: "#EEF2FF",
-    iconColor: "#4f46e5",
-    title: "Stay Alert",
-    text: "Enable SMS notifications for sudden changes in false-onset probabilities.",
-    hasButton: true,
-  },
-]
 
 export default function FalseOnsetRiskPage() {
   const router = useRouter()
@@ -282,10 +143,23 @@ export default function FalseOnsetRiskPage() {
   })
   const [districtData, setDistrictData] = useState<DistrictEnvironmentalData | null>(null)
   const [showLocationSelector, setShowLocationSelector] = useState(false)
+  const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
+  const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
+
+  const handleDistrictDataLoad = useCallback((data: DistrictSummary[]) => {
+    setLiveDistrictData(data)
+    setLiveStatus("live")
+  }, [])
+
+  // Find live data for the selected district
+  const liveSelectedDistrict = selectedLocation.district
+    ? liveDistrictData.find(d => d.district === selectedLocation.district)
+    : null
 
   // Set default to user's district on mount
   useEffect(() => {
-    if (user?.district && !selectedLocation.district) {
+    let defaultDistrict = "Lilongwe"
+    if (user?.district) {
       const districtMap: Record<string, string> = {
         lilongwe: "Lilongwe",
         blantyre: "Blantyre",
@@ -297,21 +171,20 @@ export default function FalseOnsetRiskPage() {
         salima: "Salima",
         nkhotakota: "Nkhotakota"
       }
-      const userDistrictName = districtMap[user.district.toLowerCase()] || null
-      
+      defaultDistrict = districtMap[user.district.toLowerCase()] || (user.district.charAt(0).toUpperCase() + user.district.slice(1).toLowerCase())
+    }
+
+    if (!selectedLocation.district) {
       setSelectedLocation({ 
-        district: userDistrictName, 
+        district: defaultDistrict, 
         traditionalAuthority: null, 
         area: null 
       })
       
-      // Load district environmental data
-      if (userDistrictName) {
-        const data = getDistrictData(user.district)
-        setDistrictData(data)
-      }
+      const data = getDistrictData(defaultDistrict.toLowerCase())
+      setDistrictData(data)
     }
-  }, [user?.district, selectedLocation.district])
+  }, [user?.district])
 
   const handleLocationChange = (location: LocationData) => {
     setSelectedLocation(location)
@@ -344,8 +217,12 @@ export default function FalseOnsetRiskPage() {
 
   const areaData = getSelectedAreaData()
 
-  // Get risk level from district data if no area selected
+  // Get risk level — prefer live API data
   const getRiskLevel = () => {
+    if (liveSelectedDistrict) {
+      const level = liveSelectedDistrict.overall_risk_level
+      return level === 'High' ? 'alert' : level === 'Medium' ? 'caution' : 'optimal'
+    }
     if (areaData && (areaData as any).riskLevel) {
       return (areaData as any).riskLevel
     }
@@ -412,114 +289,135 @@ export default function FalseOnsetRiskPage() {
                   selectedLocation={selectedLocation}
                   onLocationChange={handleLocationChange}
                   onClose={() => setShowLocationSelector(false)}
+                  liveDistricts={liveDistrictData.map(d => d.district).sort()}
                 />
               )}
             </div>
           </div>
         </div>
 
-        {/* Location Breadcrumb */}
-        {(selectedLocation.district || selectedLocation.traditionalAuthority || selectedLocation.area) && (
-          <div className="mt-4 flex items-center gap-2 text-sm text-[#6b7a8d]">
-            <MapPin className="h-4 w-4" />
-            <span className="font-medium text-[#0F2A3D]">{selectedLocation.district}</span>
-            {selectedLocation.traditionalAuthority && (
-              <>
-                <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                <span className="font-medium text-[#0F2A3D]">{selectedLocation.traditionalAuthority}</span>
-                {selectedLocation.area && (
-                  <>
-                    <ChevronDown className="h-3 w-3 rotate-[-90deg]" />
-                    <span className="font-medium text-[#0F2A3D]">{selectedLocation.area}</span>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        )}
+
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1fr_400px]">
-        {/* Left Panel: Risk Meter and Map */}
+        {/* Left Panel: Map Only */}
         <div className="flex flex-col gap-5">
-          <div className="rounded-[20px] bg-white p-7 shadow-sm border border-[#e9edf1]">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="text-[20px] font-bold text-[#0F2A3D]">Current Planting Risk Status</h2>
-              <span
-                className="inline-flex rounded-full px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.3em]"
-                style={{ background: "#fef3e0", color: "#d97706" }}
-              >
-                {areaData ? `${getRiskLevelText(areaData.riskLevel).toUpperCase()} RISK ZONE` : 'MEDIUM RISK ZONE'}
-              </span>
-            </div>
-
-            <RiskMeter riskLevel={areaData?.riskLevel || 'caution'} />
-
-            <div
-              className="mt-7 rounded-[20px] border border-[#f1e6d0] bg-[#fdf8f2] p-5"
-              style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)" }}
-            >
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#fff3e0]">
-                  <Info className="h-5 w-5 text-[#f0a32e]" />
-                </div>
-                <div>
-                  <p className="text-[15px] font-semibold text-[#8a4d00]">
-                    {areaData ? (
-                      areaData.riskLevel === 'alert' ?
-                        'High risk of false onset. Avoid early planting.' :
-                      areaData.riskLevel === 'caution' ?
-                        'Moderate risk. Monitor weather closely.' :
-                        'Low risk conditions. Safe for planting.'
-                    ) : 'Early rains may stop. Be cautious before planting.'}
-                  </p>
-                  <p className="mt-2 text-[13px] leading-6 text-[#6b7a8d]">
-                    {areaData ? (
-                      `Current soil moisture: ${areaData.soilMoisture}%. Forecast onset: ${areaData.forecastOnset}. ${
-                        areaData.riskLevel === 'alert' ?
-                          'The current weather patterns suggest a high probability of a dry spell following initial rains.' :
-                        areaData.riskLevel === 'caution' ?
-                          'Weather patterns show moderate risk of dry spells. Consider delayed planting.' :
-                          'Weather conditions are favorable with low risk of false onset.'
-                      }`
-                    ) : 'The current weather patterns suggest a high probability of a \'dry spell\' following the initial rains. Planting now may result in crop failure if soil moisture isn\'t sustained.'}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-7 flex flex-wrap gap-3">
-              <button
-                onClick={() => router.push("/planting-guide")}
-                className="inline-flex items-center gap-2 rounded-full bg-[#0b3a4a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0e4555]"
-              >
-                <FileText className="h-4 w-4" />
-                View Planting Guide
-              </button>
-              <button
-                onClick={() => router.push("/expert-advice")}
-                className="inline-flex items-center gap-2 rounded-full border border-[#d1d9e0] bg-white px-5 py-3 text-sm font-semibold text-[#0b3a4a] transition hover:bg-[#f4f6f8]"
-              >
-                <MapPin className="h-4 w-4 text-[#0b3a4a]" />
-                Locate Expert Advice
-              </button>
-            </div>
-          </div>
 
           <div className="rounded-[20px] bg-white p-0 shadow-sm border border-[#e9edf1] overflow-hidden" style={{ minHeight: "500px" }}>
             <FalseOnsetMap
               selectedLocation={selectedLocation}
               onLocationChange={handleLocationChange}
               userDistrict={user?.district || null}
+              onDistrictDataLoad={handleDistrictDataLoad}
             />
           </div>
         </div>
 
-        {/* Right Panel: Stay Alert Card */}
+        {/* Right Panel: Live Risk Stats Panel */}
         <div className="flex flex-col gap-5">
-          {recommendations.map((item) => (
-            <RecommendationCard key={item.title} {...item} />
-          ))}
+          {liveSelectedDistrict ? (
+            <>
+              <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1]">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-[14px] font-bold text-[#0F2A3D]">Live Risk Statistics</h3>
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] px-3 py-1 rounded-full">
+                    <Wifi className="h-3 w-3" /> Live Data
+                  </span>
+                </div>
+                <div className="flex flex-col gap-4">
+                  <div className="rounded-[14px] bg-[#fdf8f2] p-4 border border-[#f1e6d0]">
+                    <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">False-Onset Prob.</p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">{(liveSelectedDistrict.overall_risk_probability * 100).toFixed(1)}%</p>
+                  </div>
+                  <div className="rounded-[14px] bg-[#f0fdf4] p-4 border border-[#bbf7d0]">
+                    <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Grid Cells Analysed</p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">{liveSelectedDistrict.grid_cell_count}</p>
+                  </div>
+                  <div className="rounded-[14px] bg-[#f0f4ff] p-4 border border-[#c7d2fe]">
+                    <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Seasons Analysed</p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">{liveSelectedDistrict.seasons_analyzed} <span className="text-[14px] font-medium text-[#6b7a8d]">seasons</span></p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Current Planting Risk Status dynamically loaded */}
+              <div className="rounded-[20px] bg-white p-7 shadow-sm border border-[#e9edf1]">
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-[16px] font-bold text-[#0F2A3D]">Planting Risk Status</h2>
+                    <span
+                      className="inline-flex rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.2em]"
+                      style={{ 
+                        background: getRiskLevel() === 'alert' ? '#fee2e2' : getRiskLevel() === 'caution' ? '#fef3e0' : '#dcfce7', 
+                        color: getRiskLevel() === 'alert' ? '#dc2626' : getRiskLevel() === 'caution' ? '#d97706' : '#166534' 
+                      }}
+                    >
+                      {getRiskLevelText(getRiskLevel())} RISK
+                    </span>
+                  </div>
+
+                  <RiskMeter 
+                    riskLevel={getRiskLevel()} 
+                    probability={liveSelectedDistrict ? liveSelectedDistrict.overall_risk_probability : undefined} 
+                  />
+
+                  <div
+                    className="mt-4 rounded-[16px] border border-[#f1e6d0] bg-[#fdf8f2] p-4"
+                    style={{ 
+                      borderColor: getRiskLevel() === 'alert' ? '#fca5a5' : getRiskLevel() === 'caution' ? '#f1e6d0' : '#bbf7d0',
+                      backgroundColor: getRiskLevel() === 'alert' ? '#fef2f2' : getRiskLevel() === 'caution' ? '#fdf8f2' : '#f0fdf4'
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/50">
+                        <Info className="h-4 w-4" style={{ color: getRiskLevel() === 'alert' ? '#dc2626' : getRiskLevel() === 'caution' ? '#d97706' : '#166534' }} />
+                      </div>
+                      <div>
+                        <p className="text-[14px] font-bold" style={{ color: getRiskLevel() === 'alert' ? '#991b1b' : getRiskLevel() === 'caution' ? '#8a4d00' : '#14532d' }}>
+                          {getRiskLevel() === 'alert' ?
+                            'High risk of false onset. Avoid early planting.' :
+                           getRiskLevel() === 'caution' ?
+                            'Moderate risk. Monitor weather closely.' :
+                            'Low risk conditions. Safe for planting.'}
+                        </p>
+                        <p className="mt-1.5 text-[13px] leading-relaxed text-[#6b7a8d]">
+                          {`The current weather patterns suggest a ${(liveSelectedDistrict.overall_risk_probability * 100).toFixed(0)}% probability of a dry spell following initial rains. ${
+                            getRiskLevel() === 'alert' ?
+                              'Planting now may result in total crop loss during the upcoming dry spell.' :
+                            getRiskLevel() === 'caution' ?
+                              'Consider delayed planting or ensure resilient crop varieties.' :
+                              'Algorithm indicators show optimal stability for healthy seedling emergence.'
+                          }`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-3">
+                    <button
+                      onClick={() => router.push("/planting-guide")}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-[#0b3a4a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0e4555]"
+                    >
+                      <FileText className="h-4 w-4" />
+                      View Planting Guide
+                    </button>
+                    <button
+                      onClick={() => router.push("/expert-advice")}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-full border border-[#d1d9e0] bg-white px-5 py-3 text-sm font-semibold text-[#0b3a4a] transition hover:bg-[#f4f6f8]"
+                    >
+                      <MapPin className="h-4 w-4 text-[#0b3a4a]" />
+                      Locate Expert Advice
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1] flex flex-col items-center justify-center text-center" style={{ minHeight: "300px" }}>
+              <div className="mb-4 h-12 w-12 rounded-full border-2 border-dashed border-[#d1d9e0] animate-spin"></div>
+              <p className="text-sm font-medium text-[#6b7a8d]">Awaiting live statistics...</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
