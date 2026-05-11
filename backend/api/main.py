@@ -6,10 +6,16 @@ from collections import Counter
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 from backend.api.spatial import build_district_summaries, build_ta_summaries
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(PROJECT_ROOT / "backend" / ".env")
+
+from backend.api.routes.supabase_routes import router as supabase_router  # noqa: E402
+
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
 RESULTS_JSON_PATH = ALGORITHMS_OUTPUTS / "results.json"
@@ -43,6 +49,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Supabase routes (server-side access using service role key)
+app.include_router(supabase_router)
 
 
 @app.get("/")

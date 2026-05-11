@@ -80,7 +80,11 @@ export interface GeoJsonFeatureCollection {
 }
 
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000"
+  (
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://127.0.0.1:8000"
+  ).replace(/\/$/, "")
 
 const boundaryCache = new Map<string, Promise<GeoJsonFeatureCollection>>()
 const districtSummaryCache = new Map<string, Promise<DistrictSummaryResponse>>()
@@ -115,6 +119,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getApiBaseUrl() {
   return API_BASE_URL
+}
+
+export function fetchBackendHealth() {
+  return apiFetch<{ status: string }>("/api/health")
 }
 
 export function fetchAlgorithmResults() {

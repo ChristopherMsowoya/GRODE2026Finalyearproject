@@ -1,9 +1,10 @@
 "use client"
 
-import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight } from "lucide-react"
+import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight, CheckCircle2, XCircle } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 import { useState, useEffect } from "react"
+import { fetchBackendHealth, getApiBaseUrl } from "@/lib/algorithm-api"
 
 function SunRingIcon() {
   return (
@@ -174,8 +175,52 @@ function GuidanceSlideshow() {
 }
 
 export default function DashboardPage() {
+  const [backendStatus, setBackendStatus] = useState<"checking" | "online" | "offline">("checking")
+
+  useEffect(() => {
+    let mounted = true
+
+    fetchBackendHealth()
+      .then(() => {
+        if (mounted) setBackendStatus("online")
+      })
+      .catch(() => {
+        if (mounted) setBackendStatus("offline")
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const backendOnline = backendStatus === "online"
+  const backendChecking = backendStatus === "checking"
+
   return (
     <div className="space-y-6 max-w-full">
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white px-4 py-3"
+        style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)" }}
+      >
+        <div>
+          <p className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">Backend Connection</p>
+          <p className="mt-0.5 text-[12.5px] font-medium text-[#6b7a8d]">{getApiBaseUrl()}</p>
+        </div>
+        <span
+          className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] font-bold"
+          style={{
+            color: backendChecking ? "#6b7a8d" : backendOnline ? "#1F7A63" : "#D64545",
+            background: backendChecking
+              ? "#f0f4f8"
+              : backendOnline
+                ? "rgba(31,122,99,0.1)"
+                : "rgba(214,69,69,0.1)",
+          }}
+        >
+          {backendOnline ? <CheckCircle2 className="h-4 w-4" /> : <XCircle className="h-4 w-4" />}
+          {backendChecking ? "Checking" : backendOnline ? "Connected" : "Offline"}
+        </span>
+      </div>
 
       {/* ─── Hero Alert Banner ─────────────────────────────────────────── */}
       <div className="relative overflow-hidden rounded-2xl" style={{ minHeight: "260px" }}>
