@@ -1,9 +1,6 @@
 # Python
 __pycache__/
 *.py[cod]
-.env
-.env.*
-!.env.example
 
 # Algorithm runtime artifacts
 backend/algorithms/outputs/*.json
@@ -13,4 +10,5 @@ backend/algorithms/data/raw/*.nc
 # Keep these folders in the repo structure
 !backend/algorithms/data/raw/.gitkeep
 !backend/algorithms/outputs/.gitkeep
-backend/backend/algorithms/data/raw/
+backend/.env
+.env

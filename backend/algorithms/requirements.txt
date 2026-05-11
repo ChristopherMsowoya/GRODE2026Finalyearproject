@@ -6,5 +6,5 @@ xarray
 netcdf4
 supabase
 python-dotenv
-pyproj
+psycopg[binary]
 pyshp
