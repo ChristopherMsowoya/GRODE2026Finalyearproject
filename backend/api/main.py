@@ -24,6 +24,8 @@ except Exception:
     SUPABASE_AVAILABLE = False
 
 from backend.api.routes.grid_routes import router as grid_router
+from backend.api.routes.ingest_routes import router as ingest_router
+from backend.api.routes.analytics_routes import router as analytics_router
 
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
@@ -63,6 +65,8 @@ if SUPABASE_AVAILABLE and supabase_router:
     app.include_router(supabase_router)
 
 app.include_router(grid_router)
+app.include_router(ingest_router)
+app.include_router(analytics_router)
 
 
 @app.get("/")
