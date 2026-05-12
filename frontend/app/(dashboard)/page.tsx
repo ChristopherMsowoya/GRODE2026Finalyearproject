@@ -220,6 +220,31 @@ export default function DashboardPage() {
   const csLevel = csProb > 0.6 ? "HIGH" : csProb > 0.3 ? "MED" : "LOW"
   const csColor = csProb > 0.6 ? "#D64545" : csProb > 0.3 ? "#F4A261" : "#1F7A63"
 
+  // Rainfall Onset Status
+  const onsetRate = districtRiskData ? (districtRiskData.onset_detection_rate || 0) : 0
+  const onsetRatePct = (onsetRate * 100).toFixed(0) + "%"
+  const onsetStatus = {
+    color: foLevel === "HIGH" ? "#D64545" : foLevel === "MED" ? "#F4A261" : "#1F7A63",
+    bg: foLevel === "HIGH" ? "rgba(214,69,69,0.15)" : foLevel === "MED" ? "rgba(244,162,97,0.15)" : "rgba(31,122,99,0.15)",
+    border: foLevel === "HIGH" ? "rgba(214,69,69,0.3)" : foLevel === "MED" ? "rgba(244,162,97,0.3)" : "rgba(31,122,99,0.3)",
+    label: foLevel === "HIGH" ? "High Risk" : foLevel === "MED" ? "Medium Risk" : "Low Risk"
+  }
+
+  // Rainfall Onset Dates
+  const firstOnsetDate = districtRiskData?.first_detected_onset_date ? new Date(districtRiskData.first_detected_onset_date) : null
+  const latestOnsetDate = districtRiskData?.latest_detected_onset_date ? new Date(districtRiskData.latest_detected_onset_date) : null
+  const formatOnsetDate = (date: Date | null) => date ? date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'N/A'
+
+  // Onset Description
+  let onsetDescription = "Rainfall onset has been detected across the district. Monitor soil moisture before planting."
+  if (onsetRate > 0.7) {
+    onsetDescription = `Rainfall onset detected across ${onsetRatePct} of the district. Conditions are favorable for planting.`
+  } else if (onsetRate > 0.3) {
+    onsetDescription = `Rainfall onset detected in ${onsetRatePct} of the district. Some areas still awaiting consistent rains.`
+  } else {
+    onsetDescription = `Rainfall onset detected in only ${onsetRatePct} of the district. Early onset in scattered areas; widespread onset awaited.`
+  }
+
   // Dynamic Banner Logic
   let bannerTitle = "Wait before planting."
   let bannerMessage = "Current indicators suggest high risk of false-onset rains. Planting now may result in total crop loss during the upcoming dry spell."

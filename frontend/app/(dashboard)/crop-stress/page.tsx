@@ -96,11 +96,10 @@ function LocationSelector({
           <button
             key={district}
             onClick={() => handleDistrictSelect(district)}
-            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
-              selectedLocation.district === district 
-                ? "bg-[#eef2f4] font-semibold text-[#0F2A3D]" 
+            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${selectedLocation.district === district
+                ? "bg-[#eef2f4] font-semibold text-[#0F2A3D]"
                 : "text-[#6b7a8d] hover:bg-[#f8fafb] hover:text-[#0F2A3D]"
-            }`}
+              }`}
           >
             {district}
           </button>
@@ -145,10 +144,10 @@ export default function CropStressPage() {
     }
 
     if (!selectedLocation.district) {
-      setSelectedLocation({ 
-        district: defaultDistrict, 
-        traditionalAuthority: null, 
-        area: null 
+      setSelectedLocation({
+        district: defaultDistrict,
+        traditionalAuthority: null,
+        area: null
       })
     }
   }, [user?.district])
@@ -210,8 +209,8 @@ export default function CropStressPage() {
                   {selectedLocation.area
                     ? `${selectedLocation.area}`
                     : selectedLocation.traditionalAuthority
-                    ? `${selectedLocation.traditionalAuthority}`
-                    : selectedLocation.district || 'Select Location'}
+                      ? `${selectedLocation.traditionalAuthority}`
+                      : selectedLocation.district || 'Select Location'}
                 </span>
                 <ChevronDown className="h-4 w-4 text-[#6b7a8d]" />
               </button>
