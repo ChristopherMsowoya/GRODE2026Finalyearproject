@@ -1,7 +1,9 @@
 from pathlib import Path
 import json
 import sys
+import uuid
 from collections import Counter
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +16,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(PROJECT_ROOT / "backend" / ".env")
 
-from backend.api.routes.supabase_routes import router as supabase_router  # noqa: E402
+try:
+    from backend.api.routes.supabase_routes import router as supabase_router
+    SUPABASE_AVAILABLE = True
+except Exception:
+    supabase_router = None
+    SUPABASE_AVAILABLE = False
+
+from backend.api.routes.grid_routes import router as grid_router
 
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
@@ -24,7 +33,7 @@ SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
 if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
 
-from pipeline.run_pipeline import run  # noqa: E402
+from pipeline.run_pipeline import run
 
 
 class PipelineRunRequest(BaseModel):
@@ -50,8 +59,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Supabase routes (server-side access using service role key)
-app.include_router(supabase_router)
+if SUPABASE_AVAILABLE and supabase_router:
+    app.include_router(supabase_router)
+
+app.include_router(grid_router)
 
 
 @app.get("/")
@@ -145,7 +156,6 @@ def get_results_summary():
 @app.get("/api/results/district-summary")
 def get_district_summary():
     district_summaries = build_district_summaries()
-
     return {
         "district_count": len(district_summaries),
         "districts": district_summaries,
@@ -155,7 +165,6 @@ def get_district_summary():
 @app.get("/api/results/ta-summary")
 def get_ta_summary():
     ta_summaries = build_ta_summaries()
-
     return {
         "traditional_authority_count": len(ta_summaries),
         "traditional_authorities": ta_summaries,
@@ -164,12 +173,48 @@ def get_ta_summary():
 
 @app.post("/api/pipeline/run")
 def run_pipeline(payload: PipelineRunRequest):
-    run(region=payload.region)
+    run_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
 
+    # Run the algorithm pipeline
+    run(region=payload.region)
     results = load_results()
+
+    completed_at = datetime.now(timezone.utc).isoformat()
+
+    # Write to DB if Supabase is available
+    if SUPABASE_AVAILABLE:
+        try:
+            from backend.src.supabase_client import supabase
+
+            # Log pipeline run
+            supabase.table("pipeline_runs").insert({
+                "pipeline_run_id": run_id,
+                "run_name": f"pipeline-{payload.region}-{started_at[:10]}",
+                "status": "completed",
+                "region": payload.region,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "metadata": {"result_count": len(results)}
+            }).execute()
+
+            # Write each result to pipeline_results_json
+            rows = [
+                {
+                    "pipeline_run_id": run_id,
+                    "grid_id": r.get("grid_id"),
+                    "result": r
+                }
+                for r in results
+            ]
+            supabase.table("pipeline_results_json").insert(rows).execute()
+
+        except Exception as e:
+            print(f"Warning: Could not write to DB: {e}")
 
     return {
         "status": "completed",
+        "run_id": run_id,
         "region": payload.region,
         "result_count": len(results),
         "results_path": str(RESULTS_JSON_PATH),
