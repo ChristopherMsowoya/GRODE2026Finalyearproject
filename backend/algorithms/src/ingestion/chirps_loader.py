@@ -15,6 +15,10 @@ def normalize_chirps_dataset(ds):
     if "longitude" in ds.coords and "lon" not in ds.coords:
         rename_map["longitude"] = "lon"
 
+    # Handle both CHIRPS variable naming conventions: 'pr' or 'precip'
+    if "pr" in ds.data_vars and "precip" not in ds.data_vars:
+        rename_map["pr"] = "precip"
+
     if rename_map:
         ds = ds.rename(rename_map)
 
