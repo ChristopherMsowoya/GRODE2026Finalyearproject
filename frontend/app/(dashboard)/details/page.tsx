@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
+import { fetchGridCell, fetchAlgorithmResults } from "@/lib/algorithm-api"
 import {
   CheckCircle2,
   AlertTriangle,
@@ -121,6 +122,42 @@ function StatusPill({ status }: { status: string }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function DetailsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const gridId = searchParams?.get("grid_id")
+
+  const [gridFeature, setGridFeature] = useState<any | null>(null)
+  const [algoResult, setAlgoResult] = useState<any | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadForGrid() {
+      if (!gridId) return
+      try {
+        setLoading(true)
+        setLoadError(null)
+        const f = await fetchGridCell(gridId)
+        if (cancelled) return
+        setGridFeature(f)
+
+        // pull pipeline results for this grid from pipeline-results endpoint
+        const all = await fetchAlgorithmResults()
+        if (cancelled) return
+        const match = all.find((r: any) => String(r.grid_id) === String(gridId)) || null
+        setAlgoResult(match)
+      } catch (err) {
+        console.error('Details load failed', err)
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err))
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void loadForGrid()
+    return () => { cancelled = true }
+  }, [gridId])
 
   return (
     <div className="space-y-6 max-w-full">
@@ -146,9 +183,15 @@ export default function DetailsPage() {
             <div className="flex items-center gap-2 mb-3">
               <MapPin className="h-3.5 w-3.5" style={{ color: "#1F7A63" }} />
               <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: "#1F7A63" }}>
-                Lilongwe Central, Malawi
+                {gridFeature?.properties?.grid_id ? `Grid ${gridFeature.properties.grid_id}` : 'Lilongwe Central, Malawi'}
               </span>
             </div>
+            {loading && (
+              <div className="text-sm text-[#6b7a8d] mt-1">Loading details…</div>
+            )}
+            {loadError && (
+              <div className="text-sm text-[#D64545] mt-1">Error loading details: {loadError}</div>
+            )}
           </div>
           <div
             className="flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-2xl ml-8"
@@ -168,22 +211,34 @@ export default function DetailsPage() {
           style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px #e2e8f0" }}
         >
           <div className="flex items-start justify-between mb-1">
-            <div>
-              <div className="flex items-center gap-2 mb-1.5">
-                <div
-                  className="flex h-7 w-7 items-center justify-center rounded-lg"
-                  style={{ background: "rgba(31,122,99,0.12)" }}
-                >
-                  <BarChart3 className="h-4 w-4" style={{ color: "#1F7A63" }} />
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div
+                      className="flex h-7 w-7 items-center justify-center rounded-lg"
+                      style={{ background: "rgba(31,122,99,0.12)" }}
+                    >
+                      <BarChart3 className="h-4 w-4" style={{ color: "#1F7A63" }} />
+                    </div>
+                        <h2 className="text-[18px] font-bold" style={{ color: "#0F2A3D" }}>
+                          {algoResult ? 'Grid Forecast Details' : 'Detailed Forecast'}
+                        </h2>
+                  </div>
+                  <p className="text-[12.5px]" style={{ color: "#6b7a8d" }}>
+                    {algoResult ? `False onset probability: ${(algoResult.false_onset_probability * 100)?.toFixed(1)}%` : 'Projected Precipitation vs. Soil Saturation'}
+                  </p>
+                  {algoResult && (
+                    <div className="mt-3 grid grid-cols-2 gap-3">
+                      <div className="rounded-xl bg-white p-3 border border-[#e9edf1]">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">False Onset</p>
+                        <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.false_onset_probability * 100).toFixed(1)}%</p>
+                      </div>
+                      <div className="rounded-xl bg-white p-3 border border-[#e9edf1]">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">Crop Stress</p>
+                        <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.crop_stress_probability * 100).toFixed(1)}%</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <h2 className="text-[18px] font-bold" style={{ color: "#0F2A3D" }}>
-                  Detailed Forecast
-                </h2>
-              </div>
-              <p className="text-[12.5px]" style={{ color: "#6b7a8d" }}>
-                Projected Precipitation vs. Soil Saturation
-              </p>
-            </div>
             <span
               className="rounded-full px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-widest"
               style={{ background: "#E9F5EC", color: "#1F7A63", border: "1px solid rgba(31,122,99,0.25)" }}

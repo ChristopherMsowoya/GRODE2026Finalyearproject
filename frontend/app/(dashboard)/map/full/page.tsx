@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import dynamic from "next/dynamic"
 import Link from "next/link"
 import {
@@ -12,6 +12,43 @@ import type { Map as LeafletMap, Layer, PathOptions } from "leaflet"
 const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false })
 const TileLayer    = dynamic(() => import("react-leaflet").then(m => m.TileLayer),    { ssr: false })
 const GeoJSON      = dynamic(() => import("react-leaflet").then(m => m.GeoJSON),      { ssr: false })
+
+import { fetchGridCells } from "@/lib/algorithm-api"
+
+function GridLayerRenderer() {
+  const [grid, setGrid] = useState<any | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const g = await fetchGridCells({ limit: 5000 })
+        if (!cancelled) setGrid(g)
+      } catch (err) {
+        console.warn('Failed to load grid cells:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  if (!grid || !Array.isArray(grid.features)) return null
+
+  return (
+    <GeoJSON
+      key={`grid-${grid.features.length}`}
+      data={grid as any}
+      style={() => ({ color: '#0F2A3D', weight: 0.8, opacity: 0.9, fillOpacity: 0.02 })}
+      onEachFeature={(feature: GeoJSON.Feature, layer: Layer) => {
+        const gid = (feature.properties as any)?.grid_id || (feature.id as string)
+        layer.on({
+          click() { /* handled by higher UI */ },
+          mouseover(e: { target: L.Path }) { e.target.setStyle({ weight: 2.2, color: '#1F7A63', fillOpacity: 0.12 }) },
+          mouseout(e: { target: L.Path }) { e.target.setStyle({ weight: 0.8, color: '#0F2A3D', fillOpacity: 0.02 }) },
+        })
+      }}
+    />
+  )
+}
 
 interface DistrictProps {
   name:           string

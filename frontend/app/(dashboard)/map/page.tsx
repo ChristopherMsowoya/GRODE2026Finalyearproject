@@ -11,10 +11,12 @@ import {
   fetchTraditionalAuthorityGridCounts,
   fetchDistrictSummary,
   searchLocations,
+  fetchGridCells,
   type DatabaseHealthResponse,
   type LocationSearchResult,
   type TraditionalAuthorityGridCount,
-  type DistrictSummary
+  type DistrictSummary,
+  type GeoJsonFeatureCollection,
 } from "@/lib/algorithm-api"
 
 const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false })
@@ -59,6 +61,7 @@ export default function MapPage() {
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
+  const [gridGeo, setGridGeo] = useState<GeoJsonFeatureCollection | null>(null)
 
 
   const TILES = {
@@ -124,6 +127,13 @@ export default function MapPage() {
         const distMap: Record<string, DistrictSummary> = {}
         ds.districts.forEach(d => distMap[d.district] = d)
         setLiveDistricts(distMap)
+        try {
+          const grid = await fetchGridCells({ limit: 5000 })
+          if (!cancelled) setGridGeo(grid)
+        } catch (err) {
+          // non-fatal — grid layer optional
+          console.warn("Failed to load grid cells:", err)
+        }
       } catch (error) {
         if (!cancelled) {
           setDataError(error instanceof Error ? error.message : "Failed to load map intelligence data.")
@@ -280,6 +290,24 @@ export default function MapPage() {
         <MapContainer center={[-13.5, 34.2]} zoom={7} style={{ height:"100%", width:"100%" }} zoomControl={false} ref={mapRef}>
           <TileLayer key={layerStyle} url={tile.url} attribution={tile.attr} />
           <GeoJSON key={`districts-${Object.keys(liveDistricts).length > 0}`} data={malawiDistricts as any} style={featureStyle} onEachFeature={onEachFeature} />
+          {gridGeo && (
+            <GeoJSON
+              key={`grid-${gridGeo.features.length}`}
+              data={gridGeo as any}
+              style={() => ({ color: '#0F2A3D', weight: 0.8, opacity: 0.9, fillOpacity: 0.02 })}
+              onEachFeature={(feature: GeoJSON.Feature, layer: Layer) => {
+                const gid = (feature.properties as any)?.grid_id || (feature.id as string)
+                layer.on({
+                  click() {
+                    setSelectedDistrict({ name: String(gid), riskLevel: 'optimal', cropStress: 'Low', soilMoisture: 0, forecastOnset: 'Pending' })
+                    setCardVisible(true)
+                  },
+                  mouseover(e: { target: L.Path }) { e.target.setStyle({ weight: 2.2, color: '#1F7A63', fillOpacity: 0.12 }) },
+                  mouseout(e: { target: L.Path }) { e.target.setStyle({ weight: 0.8, color: '#0F2A3D', fillOpacity: 0.02 }) },
+                })
+              }}
+            />
+          )}
         </MapContainer>
 
         {/* Hovered tooltip */}
