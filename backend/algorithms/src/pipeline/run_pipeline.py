@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import csv
 import time
+import uuid
+from datetime import datetime
 
 from ingestion.chirps_loader import load_chirps
 from processing.grid_extractor import DEFAULT_BOUNDS, iter_grids_fast
@@ -12,6 +14,12 @@ from algorithms.onset import detect_onset_details_fast
 from algorithms.false_onset import calculate_false_onset_fast
 from algorithms.crop_stress import calculate_stress_fast
 from models.result_schema import build_result
+
+# DB integration: write pipeline run + per-grid JSON results linked to nearest grid_cells
+try:
+    from backend.database.connection import get_connection
+except Exception:
+    get_connection = None
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
@@ -102,6 +110,14 @@ def run(filepath=None, region="malawi", bounds=None):
         f"Results written to {JSON_OUTPUT_PATH} and {CSV_OUTPUT_PATH}"
     )
 
+    # If DB integration is available, write a pipeline_runs entry and save results
+    if get_connection:
+        try:
+            pipeline_run_id = save_pipeline_run(output_uri=str(JSON_OUTPUT_PATH))
+            save_results_json(pipeline_run_id, results)
+        except Exception as e:
+            print(f"Warning: failed to write pipeline results to DB: {e}")
+
 
 def write_csv(results, output_path):
     if not results:
@@ -125,3 +141,71 @@ def write_csv(results, output_path):
 
 if __name__ == "__main__":
     run()
+
+
+def save_pipeline_run(run_name: str = None, output_uri: str | None = None) -> str:
+    """Insert a row into pipeline_runs and return the pipeline_run_id."""
+    if run_name is None:
+        run_name = f"run-{datetime.utcnow().isoformat()}"
+
+    insert_sql = """
+    insert into pipeline_runs (pipeline_run_id, run_name, output_uri, status, completed_at)
+    values (%(id)s, %(run_name)s, %(output_uri)s, 'completed', now())
+    on conflict (pipeline_run_id) do update set status = excluded.status
+    returning pipeline_run_id
+    """
+
+    pid = str(uuid.uuid4())
+    params = {"id": pid, "run_name": run_name, "output_uri": output_uri}
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(insert_sql, params)
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+
+    return pid
+
+
+def save_results_json(pipeline_run_id: str, results: list):
+    """Create `pipeline_results_json` table if missing and insert each result as jsonb.
+    Attempt to link each result to nearest `grid_cells.grid_id` using KNN.
+    """
+    create_sql = """
+    create table if not exists pipeline_results_json (
+      result_id uuid primary key default gen_random_uuid(),
+      pipeline_run_id uuid references pipeline_runs(pipeline_run_id) on delete cascade,
+      grid_id text references grid_cells(grid_id),
+      result jsonb not null,
+      created_at timestamptz not null default now()
+    );
+    """
+
+    insert_sql = """
+    insert into pipeline_results_json (pipeline_run_id, grid_id, result)
+    values (%(pipeline_run_id)s, %(grid_id)s, %(result)s::jsonb)
+    """
+
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(create_sql)
+
+            for r in results:
+                grid_id = None
+                try:
+                    # find nearest grid cell by centroid
+                    q = "select grid_id from grid_cells order by geom <-> st_setsrid(st_point(%(lon)s, %(lat)s), 4326) limit 1"
+                    cursor.execute(q, {"lon": r.get("longitude"), "lat": r.get("latitude")})
+                    row = cursor.fetchone()
+                    if row:
+                        grid_id = row[0]
+                except Exception:
+                    grid_id = None
+
+                cursor.execute(insert_sql, {
+                    "pipeline_run_id": pipeline_run_id,
+                    "grid_id": grid_id,
+                    "result": json.dumps(r)
+                })
+        connection.commit()
