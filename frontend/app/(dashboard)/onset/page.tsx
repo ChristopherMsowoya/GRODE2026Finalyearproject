@@ -265,7 +265,7 @@ export default function OnsetInfoPage() {
               className="text-[36px] font-extrabold tracking-tight leading-tight"
               style={{ color: "#0F2A3D" }}
             >
-              Rainfall Onset Detected
+              Rainfall Onset Forecast
             </h1>
             {liveStatus === "live" && liveSelectedDistrict && (
               <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1 rounded-full">

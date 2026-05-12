@@ -1,66 +1,70 @@
-# ESRI Phase I Database
+# Supabase Setup
 
-This folder contains the database foundation for the ESRI Phase I climate
-intelligence engine.
+This folder contains the first database foundation for moving the project from file-based outputs to Supabase Postgres with PostGIS.
 
-## Step 1: Apply The Foundation Schema
+## What is included
 
-Run the SQL in:
+- `sql/001_init_supabase_schema.sql`
+  Creates the main spatial tables and indexes.
+- `config.py`
+  Reads Supabase connection settings from environment variables.
+- `supabase_client.py`
+  Creates a reusable Supabase Python client.
 
-```text
-backend/database/migrations/001_phase_i_foundation.sql
-```
+## Environment variables
 
-Use either:
+Create a root `.env` file from `.env.example` and fill in:
 
-- Supabase SQL Editor
-- `psql`
-- any PostgreSQL client connected to a PostGIS-enabled database
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
+- `SUPABASE_DB_SCHEMA`
 
-The migration creates the core Phase I tables for:
+Use the service role key for backend/server-side scripts only. Do not expose it in the frontend.
 
-- Malawi boundaries
-- 5 km grid cells
-- daily rainfall time series
-- onset results
-- false-onset events and probabilities
-- dry-spell events and probabilities
-- climatology products
-- dataset, algorithm, and pipeline run metadata
+## Initial dashboard setup
 
-If `DATABASE_URL` is set in `.env` or `backend/.env`, migrations can also be
-applied from the project root with:
+1. Create a Supabase project.
+2. Open `Database` -> `Extensions`.
+3. Enable `postgis`.
+4. Open `SQL Editor`.
+5. Run `backend/database/sql/001_init_supabase_schema.sql`.
+6. Run `backend/database/sql/002_boundary_import_functions.sql`.
+7. Run `backend/database/sql/003_grid_generation_functions.sql`.
+
+## Install Python dependency
+
+Add the Supabase Python client to the backend environment:
 
 ```powershell
-python -m backend.database.apply_migrations
+python -m pip install supabase
 ```
 
-## Design Notes
+Or add it to `backend/algorithms/requirements.txt` and install from there.
 
-- Computation stays grid-first.
-- Admin boundaries are stored for search and aggregation, not as the primary
-  computation unit.
-- `daily_rainfall` is partitioned by `rainfall_date` so historical daily data
-  can scale to decades of national coverage.
-- Algorithm versions and pipeline runs are first-class records to support
-  reproducibility.
+## Next recommended implementation steps
 
-## Step 2: Import Boundaries
-
-After applying the schema and setting `DATABASE_URL`, load the bundled Malawi
-shapefiles:
+1. Run the boundary importer:
 
 ```powershell
 python -m backend.database.import_boundaries
 ```
 
-## Step 3: Build The 5 km Grid
-
-Generate the national 5 km grid from the imported Malawi boundary:
+2. Build the 5km Malawi grid:
 
 ```powershell
-python -m backend.database.build_grid
+python -m backend.database.build_grid_local
 ```
 
-The grid is generated in PostGIS using EPSG:32736 for meter-based 5 km cells,
-then stored as WGS84 polygons for web mapping.
+3. Load daily CHIRPS rainfall onto the grid:
+
+```powershell
+python -m backend.database.ingest_chirps_to_grid 2022
+```
+
+4. Load populated places into the `locations` table:
+
+```powershell
+python -m backend.database.import_locations
+```
+
+5. Add a script that writes algorithm outputs into `grid_risk_results`.

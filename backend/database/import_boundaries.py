@@ -1,111 +1,89 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
-import shapefile
-
-from backend.database.connection import get_connection
-
-SHAPEFILES_ROOT = Path(__file__).resolve().parent / "data" / "shapefiles"
-
-BOUNDARY_SOURCES = [
-    (0, "ADM0(country)", "geoBoundaries-MWI-ADM0.shp"),
-    (1, "ADM1(region)", "geoBoundaries-MWI-ADM1.shp"),
-    (2, "ADM2(district)", "geoBoundaries-MWI-ADM2.shp"),
-    (3, "ADM3(TA)", "geoBoundaries-MWI-ADM3.shp"),
-]
-
-SOURCE_NAME = "geoBoundaries"
-SOURCE_VERSION = "full"
+from backend.database.supabase_client import get_supabase_client
 
 
-def shape_to_geojson(shape_record):
-    return json.dumps(shape_record.shape.__geo_interface__)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DISTRICTS_GEOJSON_PATH = (
+    PROJECT_ROOT
+    / "backend"
+    / "database"
+    / "data"
+    / "shapefiles"
+    / "ADM2(district)"
+    / "geoBoundaries-MWI-ADM2.geojson"
+)
+TA_GEOJSON_PATH = (
+    PROJECT_ROOT
+    / "backend"
+    / "database"
+    / "data"
+    / "shapefiles"
+    / "ADM3(TA)"
+    / "geoBoundaries-MWI-ADM3.geojson"
+)
 
 
-def import_boundaries():
-    from psycopg.types.json import Json
+def load_features(path: Path) -> list[dict]:
+    with path.open("r", encoding="utf-8") as geojson_file:
+        data = json.load(geojson_file)
+    return data["features"]
 
-    with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "delete from mw_boundary where source_name = %s and source_version = %s",
-                (SOURCE_NAME, SOURCE_VERSION),
-            )
-            cursor.execute(
-                "delete from admin_boundaries where source_name = %s and source_version = %s",
-                (SOURCE_NAME, SOURCE_VERSION),
-            )
 
-            for admin_level, folder_name, shapefile_name in BOUNDARY_SOURCES:
-                shapefile_path = SHAPEFILES_ROOT / folder_name / shapefile_name
-                reader = shapefile.Reader(str(shapefile_path))
+def import_districts() -> int:
+    client = get_supabase_client()
+    count = 0
 
-                for shape_record in reader.iterShapeRecords():
-                    properties = shape_record.record.as_dict()
-                    boundary_name = properties.get("shapeName") or f"ADM{admin_level}"
-                    boundary_code = properties.get("shapeID")
-                    geometry_json = shape_to_geojson(shape_record)
+    for feature in load_features(DISTRICTS_GEOJSON_PATH):
+        properties = feature["properties"]
+        payload = {
+            "p_shape_id": properties["shapeID"],
+            "p_name": properties["shapeName"],
+            "p_geom": feature["geometry"],
+            "p_metadata": properties,
+        }
+        client.rpc("upsert_district_boundary", payload).execute()
+        count += 1
 
-                    if admin_level == 0:
-                        cursor.execute(
-                            """
-                            insert into mw_boundary (
-                              country_name,
-                              source_name,
-                              source_version,
-                              geom
-                            )
-                            values (
-                              %s,
-                              %s,
-                              %s,
-                              st_multi(st_makevalid(st_setsrid(st_geomfromgeojson(%s), 4326)))
-                            )
-                            """,
-                            (
-                                boundary_name,
-                                SOURCE_NAME,
-                                SOURCE_VERSION,
-                                geometry_json,
-                            ),
-                        )
+    return count
 
-                    cursor.execute(
-                        """
-                        insert into admin_boundaries (
-                          admin_level,
-                          boundary_code,
-                          boundary_name,
-                          source_name,
-                          source_version,
-                          properties,
-                          geom
-                        )
-                        values (
-                          %s,
-                          %s,
-                          %s,
-                          %s,
-                          %s,
-                          %s,
-                          st_multi(st_makevalid(st_setsrid(st_geomfromgeojson(%s), 4326)))
-                        )
-                        """,
-                        (
-                            admin_level,
-                            boundary_code,
-                            boundary_name,
-                            SOURCE_NAME,
-                            SOURCE_VERSION,
-                            Json(properties),
-                            geometry_json,
-                        ),
-                    )
 
-        connection.commit()
+def import_traditional_authorities() -> int:
+    client = get_supabase_client()
+    count = 0
 
-    print("Boundary import completed.")
+    for feature in load_features(TA_GEOJSON_PATH):
+        properties = feature["properties"]
+        payload = {
+            "p_shape_id": properties["shapeID"],
+            "p_name": properties["shapeName"],
+            "p_geom": feature["geometry"],
+            "p_metadata": properties,
+        }
+        client.rpc("upsert_traditional_authority_boundary", payload).execute()
+        count += 1
+
+    return count
+
+
+def link_tas_to_districts() -> int:
+    client = get_supabase_client()
+    response = client.rpc("link_traditional_authorities_to_districts").execute()
+    return response.data
+
+
+def main():
+    district_count = import_districts()
+    ta_count = import_traditional_authorities()
+    linked_ta_count = link_tas_to_districts()
+
+    print(f"Imported districts: {district_count}")
+    print(f"Imported traditional authorities: {ta_count}")
+    print(f"Linked TAs to districts: {linked_ta_count}")
 
 
 if __name__ == "__main__":
-    import_boundaries()
+    main()

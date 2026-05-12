@@ -204,7 +204,7 @@ export default function DashboardPage() {
   const defaultDistrict = formatDistrict(user?.district)
   const districtRiskData = liveDistrictData.find(d => d.district === defaultDistrict)
 
-  const foProb = districtRiskData ? (districtRiskData.average_false_onset_probability || 0) : 0.90
+  const foProb = districtRiskData ? (districtRiskData.overall_risk_probability || 0) : 0.90
   const foLevel = foProb > 0.6 ? "HIGH" : foProb > 0.3 ? "MED" : "LOW"
   const foColor = foProb > 0.6 ? "#D64545" : foProb > 0.3 ? "#F4A261" : "#1F7A63"
   const foPercent = (foProb * 100).toFixed(0) + "%"
@@ -219,40 +219,6 @@ export default function DashboardPage() {
   const csProb = districtRiskData ? (districtRiskData.average_crop_stress_probability || 0) : 0.45
   const csLevel = csProb > 0.6 ? "HIGH" : csProb > 0.3 ? "MED" : "LOW"
   const csColor = csProb > 0.6 ? "#D64545" : csProb > 0.3 ? "#F4A261" : "#1F7A63"
-
-  // ─── Onset Status (live from backend) ───
-  const onsetRate = districtRiskData?.onset_detection_rate ?? null
-  const latestOnsetDate = districtRiskData?.latest_detected_onset_date ?? null
-  const firstOnsetDate  = districtRiskData?.first_detected_onset_date  ?? null
-
-  const onsetStatus = liveStatus === "loading"
-    ? { label: "Analyzing…",    color: "#6b7a8d", bg: "rgba(107,122,141,0.08)", border: "rgba(107,122,141,0.3)" }
-    : onsetRate === null
-    ? { label: "No Data",       color: "#6b7a8d", bg: "rgba(107,122,141,0.08)", border: "rgba(107,122,141,0.3)" }
-    : onsetRate >= 0.8
-    ? { label: "Confirmed",     color: "#1F7A63", bg: "rgba(31,122,99,0.08)",   border: "rgba(31,122,99,0.3)"  }
-    : onsetRate >= 0.4
-    ? { label: "Intermittent",  color: "#F4A261", bg: "rgba(244,162,97,0.08)",  border: "rgba(244,162,97,0.3)" }
-    : { label: "Not Detected",  color: "#D64545", bg: "rgba(214,69,69,0.08)",   border: "rgba(214,69,69,0.3)"  }
-
-  const onsetRatePct  = onsetRate !== null ? `${(onsetRate * 100).toFixed(0)}%` : "—"
-
-  function formatOnsetDate(raw: string | null): string {
-    if (!raw) return "—"
-    try { return new Date(raw).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) }
-    catch { return raw }
-  }
-
-  const onsetDescription =
-    liveStatus === "loading"
-      ? "Fetching onset data from the analysis backend…"
-      : onsetRate === null
-      ? "No onset data is currently available for this district."
-      : onsetRate >= 0.8
-      ? `Rainfall onset has been consistently detected in ${onsetRatePct} of analyzed seasons. Latest confirmed onset was ${formatOnsetDate(latestOnsetDate)}.`
-      : onsetRate >= 0.4
-      ? `Onset detected in ${onsetRatePct} of seasons — intermittent patterns observed. Latest onset: ${formatOnsetDate(latestOnsetDate)}.`
-      : `Onset detected in only ${onsetRatePct} of seasons. Rainfall onset remains unreliable for ${defaultDistrict}.`
 
   // Dynamic Banner Logic
   let bannerTitle = "Wait before planting."
@@ -271,7 +237,7 @@ export default function DashboardPage() {
     }
   } else if (foLevel === "LOW") {
     bannerTitle = "Favorable Planting Conditions."
-    bannerMessage = "Algorithm indicators show low risk of false-onset rains. Planting currently recommended following detected optimal window."
+    bannerMessage = "Algorithm indicators show low risk of false-onset rains. Planting is currently recommended following optimal soil moisture."
     bannerTheme = {
       badgeBg: "rgba(31,122,99,0.22)", badgeColor: "#1F7A63",
       iconBg: "rgba(31,122,99,0.22)", iconBorder: "rgba(31,122,99,0.4)"

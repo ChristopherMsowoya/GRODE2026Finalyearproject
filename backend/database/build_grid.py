@@ -6,10 +6,11 @@ PROJECTED_SRID = 32736
 
 
 def build_grid():
-    sql = """
-    delete from grid_admin_intersections;
-    delete from grid_cells where source_grid = %(source_grid)s;
+    sql_delete_intersections = "delete from grid_admin_intersections;"
 
+    sql_delete_cells = "delete from grid_cells where source_grid = %(source_grid)s;"
+
+    sql_insert_cells = """
     with boundary as (
       select st_transform(st_unaryunion(st_collect(geom)), %(projected_srid)s) as geom
       from mw_boundary
@@ -61,7 +62,9 @@ def build_grid():
       %(source_grid)s as source_grid,
       st_transform(geom, 4326) as geom
     from numbered_cells;
+    """
 
+    sql_insert_intersections = """
     insert into grid_admin_intersections (
       grid_id,
       admin_boundary_id,
@@ -103,9 +106,14 @@ def build_grid():
     }
 
     with get_connection() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(sql, params)
-        connection.commit()
+      with connection.cursor() as cursor:
+        cursor.execute(sql_delete_intersections)
+        cursor.execute(sql_delete_cells, params)
+        cursor.execute(sql_insert_cells, params)
+        cursor.execute(sql_insert_intersections, params)
+
+      # commit after the cursor context (ensures statements are sent)
+      connection.commit()
 
     print(f"{GRID_SIZE_METERS / 1000:.0f} km grid generation completed.")
 

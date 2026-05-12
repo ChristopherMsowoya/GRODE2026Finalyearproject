@@ -11,10 +11,12 @@ import {
   fetchTraditionalAuthorityGridCounts,
   fetchDistrictSummary,
   searchLocations,
+  fetchGridCells,
   type DatabaseHealthResponse,
   type LocationSearchResult,
   type TraditionalAuthorityGridCount,
-  type DistrictSummary
+  type DistrictSummary,
+  type GeoJsonFeatureCollection,
 } from "@/lib/algorithm-api"
 
 const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false })
@@ -59,6 +61,7 @@ export default function MapPage() {
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
+  const [gridGeo, setGridGeo] = useState<GeoJsonFeatureCollection | null>(null)
 
 
   const TILES = {
@@ -124,6 +127,13 @@ export default function MapPage() {
         const distMap: Record<string, DistrictSummary> = {}
         ds.districts.forEach(d => distMap[d.district] = d)
         setLiveDistricts(distMap)
+        try {
+          const grid = await fetchGridCells({ limit: 5000 })
+          if (!cancelled) setGridGeo(grid)
+        } catch (err) {
+          // non-fatal — grid layer optional
+          console.warn("Failed to load grid cells:", err)
+        }
       } catch (error) {
         if (!cancelled) {
           setDataError(error instanceof Error ? error.message : "Failed to load map intelligence data.")
@@ -267,20 +277,6 @@ export default function MapPage() {
                       {selectedLocation.latitude.toFixed(4)}, {selectedLocation.longitude.toFixed(4)}
                     </p>
                   </div>
-                  <div className="rounded-xl bg-white p-3 border border-[#e9edf1]">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">5km Grid Cell</p>
-                    <p className="mt-1 font-semibold text-[#0F2A3D]">
-                      {selectedLocation.grid_id || "Unknown"}
-                    </p>
-                  </div>
-                  <div className="col-span-2 rounded-xl bg-white p-3 border border-[#e9edf1]">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">TA Grid Coverage</p>
-                    <p className="mt-1 font-semibold text-[#0F2A3D]">
-                      {selectedLocation.traditional_authority 
-                        ? `${taCounts.find(ta => ta.traditional_authority === selectedLocation.traditional_authority)?.grid_cell_count || 0} grid cells in ${selectedLocation.traditional_authority}`
-                        : "TA coverage not available"}
-                    </p>
-                  </div>
                 </div>
               </div>
             )}
@@ -294,6 +290,24 @@ export default function MapPage() {
         <MapContainer center={[-13.5, 34.2]} zoom={7} style={{ height:"100%", width:"100%" }} zoomControl={false} ref={mapRef}>
           <TileLayer key={layerStyle} url={tile.url} attribution={tile.attr} />
           <GeoJSON key={`districts-${Object.keys(liveDistricts).length > 0}`} data={malawiDistricts as any} style={featureStyle} onEachFeature={onEachFeature} />
+          {gridGeo && (
+            <GeoJSON
+              key={`grid-${gridGeo.features.length}`}
+              data={gridGeo as any}
+              style={() => ({ color: '#0F2A3D', weight: 0.8, opacity: 0.9, fillOpacity: 0.02 })}
+              onEachFeature={(feature: GeoJSON.Feature, layer: Layer) => {
+                const gid = (feature.properties as any)?.grid_id || (feature.id as string)
+                layer.on({
+                  click() {
+                    setSelectedDistrict({ name: String(gid), riskLevel: 'optimal', cropStress: 'Low', soilMoisture: 0, forecastOnset: 'Pending' })
+                    setCardVisible(true)
+                  },
+                  mouseover(e: { target: L.Path }) { e.target.setStyle({ weight: 2.2, color: '#1F7A63', fillOpacity: 0.12 }) },
+                  mouseout(e: { target: L.Path }) { e.target.setStyle({ weight: 0.8, color: '#0F2A3D', fillOpacity: 0.02 }) },
+                })
+              }}
+            />
+          )}
         </MapContainer>
 
         {/* Hovered tooltip */}
@@ -305,51 +319,7 @@ export default function MapPage() {
         )}
 
         {/* Data Legend / Stats (bottom-left) */}
-        <div className="absolute bottom-6 left-6 z-[800] w-72 rounded-2xl p-5"
-          style={{ background:"rgba(255,255,255,0.95)", backdropFilter:"blur(16px)", boxShadow:"0 16px 48px rgba(15,42,61,0.22), 0 0 0 1px rgba(255,255,255,0.7)" }}>
-          <div className="mb-4 flex items-center justify-between">
-             <h3 className="text-sm font-extrabold text-[#0F2A3D]">Algorithm Intel</h3>
-             {dbHealth && dbHealth.status === "ok" ? (
-               <span className="flex items-center gap-1.5 rounded-full bg-[#E9F5EC] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#1F7A63]">
-                 <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#1F7A63]"></div>
-                 Live
-               </span>
-             ) : (
-               <span className="flex items-center gap-1.5 rounded-full bg-[#FEF3C7] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#d97706]">
-                  Connecting...
-               </span>
-             )}
-          </div>
 
-          <div className="space-y-3">
-             <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs font-semibold text-[#6b7a8d]"><Database className="h-3.5 w-3.5" /> PostGIS Bounds</span>
-                <span className="text-xs font-bold text-[#0F2A3D]">{dbHealth && dbHealth.grid_cell_count ? `${dbHealth.grid_cell_count.toLocaleString()}` : "..."}</span>
-             </div>
-             <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs font-semibold text-[#6b7a8d]"><Layers className="h-3.5 w-3.5" /> Analyzed TAs</span>
-                <span className="text-xs font-bold text-[#0F2A3D]">{topTaCounts.length || "..."}</span>
-             </div>
-             <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs font-semibold text-[#6b7a8d]"><MapPin className="h-3.5 w-3.5" /> Analyzed Districts</span>
-                <span className="text-xs font-bold text-[#0F2A3D]">{Object.keys(liveDistricts).length || "..."}</span>
-             </div>
-          </div>
-          
-          {topTaCounts.length > 0 && (
-             <div className="mt-4 pt-4 border-t border-[#e2e8f0]">
-               <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[#6b7a8d]">Largest TA Grids</h4>
-               <div className="space-y-2">
-                 {topTaCounts.slice(0, 4).map((ta, idx) => (
-                    <div key={ta.traditional_authority} className="flex justify-between items-center text-xs">
-                        <span className="truncate pr-2 font-medium text-[#0F2A3D]">{idx+1}. {ta.traditional_authority}</span>
-                        <span className="font-bold text-[#6b7a8d]">{ta.grid_cell_count} cells</span>
-                    </div>
-                 ))}
-               </div>
-             </div>
-          )}
-        </div>
 
         {/* District info card (bottom-center) */}
         {cardVisible && (

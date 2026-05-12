@@ -250,6 +250,9 @@ export default function CropStressPage() {
                 <div>
                   <div className="flex items-start justify-between mb-4">
                     <h3 className="text-[14px] font-semibold text-[#6b7a8d] uppercase tracking-[0.24em]">Crop Stress Risk</h3>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: "#f0f4f8" }}>
+                      <Droplets className="h-5 w-5" style={{ color: "#0987a6" }} />
+                    </div>
                   </div>
                   <div className="mb-3">
                     <p className="text-[32px] font-bold text-[#0d2f3f]">
@@ -268,10 +271,13 @@ export default function CropStressPage() {
                 <div>
                   <div className="flex items-start justify-between mb-4">
                     <h3 className="text-[14px] font-semibold text-[#6b7a8d] uppercase tracking-[0.24em]">False-Onset Risk</h3>
+                    <div className="flex h-10 w-10 items-center justify-center rounded-2xl" style={{ background: "#fff3e0" }}>
+                      <Thermometer className="h-5 w-5" style={{ color: "#d97706" }} />
+                    </div>
                   </div>
                   <div className="mb-3">
                     <p className="text-[32px] font-bold text-[#0d2f3f]">
-                      {(liveSelectedDistrict.average_false_onset_probability * 100).toFixed(1)}
+                      {(liveSelectedDistrict.overall_risk_probability * 100).toFixed(1)}
                       <span className="text-[18px] font-semibold text-[#6b7a8d]">%</span>
                     </p>
                   </div>

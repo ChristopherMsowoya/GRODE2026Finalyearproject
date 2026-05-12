@@ -1,2 +1,1 @@
-"""Database helpers for the ESRI Phase I backend."""
-
+"""Database helpers for Supabase-backed persistence."""
