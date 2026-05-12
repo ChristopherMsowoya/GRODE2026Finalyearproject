@@ -7,9 +7,13 @@ router = APIRouter(prefix="/api", tags=["database"])
 def _get_supabase():
     try:
         from backend.src.supabase_client import supabase
-        return supabase
     except Exception:
         raise HTTPException(status_code=503, detail="Supabase client not available.")
+
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase client not available.")
+
+    return supabase
 
 
 # ── Grid Cells ───────────────────────────────────────────────
@@ -84,11 +88,34 @@ async def get_pipeline_results(
     limit: int = Query(default=100, ge=1, le=10000)
 ):
     """Fetch pipeline results, optionally filtered by run or grid cell."""
-    supabase = _get_supabase()
-    query = supabase.table("pipeline_results_json").select("*").limit(limit)
-    if pipeline_run_id:
-        query = query.eq("pipeline_run_id", pipeline_run_id)
-    if grid_id:
-        query = query.eq("grid_id", grid_id)
-    res = query.execute()
-    return {"count": len(res.data), "data": res.data}
+    try:
+        supabase = _get_supabase()
+    except HTTPException:
+        # Fallback: read local results.json if Supabase client not configured
+        from pathlib import Path
+        import json
+
+        PROJECT_ROOT = Path(__file__).resolve().parents[3]
+        results_path = PROJECT_ROOT / "backend" / "algorithms" / "outputs" / "results.json"
+        if not results_path.exists():
+            return {"count": 0, "data": []}
+
+        with results_path.open("r", encoding="utf-8") as f:
+            rows = json.load(f)
+
+        # apply optional filtering
+        if pipeline_run_id:
+            # local results do not have pipeline_run_id; return empty
+            rows = []
+        if grid_id:
+            rows = [r for r in rows if r.get("grid_id") == grid_id]
+
+        return {"count": len(rows[:limit]), "data": rows[:limit]}
+    else:
+        query = supabase.table("pipeline_results_json").select("*").limit(limit)
+        if pipeline_run_id:
+            query = query.eq("pipeline_run_id", pipeline_run_id)
+        if grid_id:
+            query = query.eq("grid_id", grid_id)
+        res = query.execute()
+        return {"count": len(res.data), "data": res.data}

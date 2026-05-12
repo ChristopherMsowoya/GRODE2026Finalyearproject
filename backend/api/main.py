@@ -18,9 +18,15 @@ load_dotenv(PROJECT_ROOT / "backend" / ".env")
 
 try:
     from backend.api.routes.supabase_routes import router as supabase_router
-    SUPABASE_AVAILABLE = True
 except Exception:
     supabase_router = None
+
+# Only mark Supabase as available if the supabase client can be imported.
+try:
+    import importlib
+    importlib.import_module("backend.src.supabase_client")
+    SUPABASE_AVAILABLE = True
+except Exception:
     SUPABASE_AVAILABLE = False
 
 from backend.api.routes.grid_routes import router as grid_router
@@ -35,7 +41,7 @@ SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
 if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
 
-from pipeline.run_pipeline import run
+from backend.src.pipeline.run_pipeline import run
 
 
 class PipelineRunRequest(BaseModel):
@@ -173,6 +179,34 @@ def get_ta_summary():
         "traditional_authority_count": len(ta_summaries),
         "traditional_authorities": ta_summaries,
     }
+
+
+# Compatibility adapter endpoints for the frontend (legacy paths)
+
+
+@app.get("/api/pipeline-results")
+def get_pipeline_results():
+    return get_results()
+
+
+@app.get("/api/pipeline-results/summary")
+def get_pipeline_results_summary():
+    return get_results_summary()
+
+
+@app.get("/api/pipeline-results/district-summary")
+def get_pipeline_results_district_summary():
+    return get_district_summary()
+
+
+@app.get("/api/pipeline-results/ta-summary")
+def get_pipeline_results_ta_summary():
+    return get_ta_summary()
+
+
+@app.get("/api/database/health")
+def api_database_health():
+    return health_check()
 
 
 @app.post("/api/pipeline/run")

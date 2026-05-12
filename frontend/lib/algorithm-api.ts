@@ -152,14 +152,14 @@ export function getApiBaseUrl() {
 }
 
 export function fetchAlgorithmResults() {
-  return apiFetch<AlgorithmResult[]>('/api/pipeline-results')
+  return apiFetch<AlgorithmResult[]>('/api/results')
 }
 
 export function fetchAlgorithmSummary() {
   const key = "algorithm-summary"
 
   if (!algorithmSummaryCache.has(key)) {
-    algorithmSummaryCache.set(key, apiFetch<AlgorithmSummary>('/api/pipeline-results/summary'))
+    algorithmSummaryCache.set(key, apiFetch<AlgorithmSummary>('/api/results/summary'))
   }
 
   return algorithmSummaryCache.get(key)!
@@ -167,14 +167,14 @@ export function fetchAlgorithmSummary() {
 
 export function fetchDistrictSummary() {
   // Always fetch fresh -- results update whenever pipeline runs
-  return apiFetch<DistrictSummaryResponse>('/api/pipeline-results/district-summary')
+  return apiFetch<DistrictSummaryResponse>('/api/results/district-summary')
 }
 
 export function fetchTraditionalAuthoritySummary() {
   const key = "ta-summary"
 
   if (!taSummaryCache.has(key)) {
-    taSummaryCache.set(key, apiFetch<TraditionalAuthoritySummaryResponse>('/api/pipeline-results/ta-summary'))
+    taSummaryCache.set(key, apiFetch<TraditionalAuthoritySummaryResponse>('/api/results/ta-summary'))
   }
 
   return taSummaryCache.get(key)!
