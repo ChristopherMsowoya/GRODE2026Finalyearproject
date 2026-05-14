@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from backend.api.spatial import build_district_summaries, build_ta_summaries
+from backend.api.spatial import build_district_summaries, build_ta_summaries, get_grids_for_ta
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -42,6 +42,14 @@ if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
 
 from backend.src.pipeline.run_pipeline import run
+
+
+LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
+LEGACY_DRY_INTERPRETATION_KEY = "crop_" + "stress_interpretation"
+
+
+def dry_spell_probability(result: dict) -> float:
+    return result.get("dry_spell_probability", result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0))
 
 
 class PipelineRunRequest(BaseModel):
@@ -134,8 +142,8 @@ def get_results_summary():
         sum(result["false_onset_probability"] for result in results) / len(results),
         3,
     )
-    average_crop_stress_probability = round(
-        sum(result["crop_stress_probability"] for result in results) / len(results),
+    average_dry_spell_probability = round(
+        sum(dry_spell_probability(result) for result in results) / len(results),
         3,
     )
     seasons_analyzed = max(result["seasons_analyzed"] for result in results)
@@ -143,7 +151,7 @@ def get_results_summary():
     highest_risk_cells = sorted(
         results,
         key=lambda result: (
-            result["crop_stress_probability"],
+            dry_spell_probability(result),
             result["false_onset_probability"],
         ),
         reverse=True,
@@ -158,7 +166,7 @@ def get_results_summary():
             "High": risk_counts.get("High", 0),
         },
         "average_false_onset_probability": average_false_onset_probability,
-        "average_crop_stress_probability": average_crop_stress_probability,
+        "average_dry_spell_probability": average_dry_spell_probability,
         "highest_risk_cells": highest_risk_cells,
     }
 
@@ -185,8 +193,11 @@ def get_ta_summary():
 
 
 @app.get("/api/pipeline-results")
-def get_pipeline_results():
-    return get_results()
+def get_pipeline_results(grid_id: str | None = Query(default=None), limit: int = Query(default=1000, ge=1, le=20000)):
+    results = normalize_results(load_results())
+    if grid_id:
+        results = [result for result in results if result.get("grid_id") == grid_id]
+    return {"count": len(results[:limit]), "data": results[:limit]}
 
 
 @app.get("/api/pipeline-results/summary")
@@ -207,6 +218,93 @@ def get_pipeline_results_ta_summary():
 @app.get("/api/database/health")
 def api_database_health():
     return health_check()
+
+
+@app.get("/api/locations/hierarchy")
+def get_location_hierarchy():
+    """Return District → TA hierarchy tree for the location selector."""
+    ta_summaries = build_ta_summaries()
+
+    # Group TAs by district
+    district_map: dict[str, list[dict]] = {}
+    for ta in ta_summaries:
+        district = ta.get("district") or "Unknown"
+        if district not in district_map:
+            district_map[district] = []
+        district_map[district].append({
+            "ta": ta["traditional_authority"],
+            "grid_cell_count": ta["grid_cell_count"],
+            "overall_risk_level": ta["overall_risk_level"],
+            "average_false_onset_probability": ta["average_false_onset_probability"],
+            "average_dry_spell_probability": ta["average_dry_spell_probability"],
+        })
+
+    hierarchy = sorted(
+        [
+            {"district": dist, "ta_count": len(tas), "traditional_authorities": sorted(tas, key=lambda x: x["ta"])}
+            for dist, tas in district_map.items()
+            if dist != "Unknown"
+        ],
+        key=lambda x: x["district"],
+    )
+
+    return {"district_count": len(hierarchy), "districts": hierarchy}
+
+
+@app.get("/api/locations/ta-results")
+def get_ta_results(district: str = Query(...), ta: str = Query(...)):
+    """Return aggregated climate risk data for a specific Traditional Authority."""
+    ta_summaries = build_ta_summaries()
+
+    matched = next(
+        (
+            s for s in ta_summaries
+            if s["traditional_authority"].lower() == ta.lower()
+            and (s.get("district") or "").lower() == district.lower()
+        ),
+        None,
+    )
+
+    if not matched:
+        # Try fuzzy match on TA name only
+        matched = next(
+            (s for s in ta_summaries if s["traditional_authority"].lower() == ta.lower()),
+            None,
+        )
+
+    if not matched:
+        raise HTTPException(status_code=404, detail=f"TA '{ta}' not found in district '{district}'.")
+
+    return matched
+
+
+@app.get("/api/locations/district-results")
+def get_district_results(district: str = Query(...)):
+    """Return aggregated climate risk data for a specific district."""
+    district_summaries = build_district_summaries()
+    matched = next(
+        (d for d in district_summaries if d["district"].lower() == district.lower()),
+        None,
+    )
+    if not matched:
+        raise HTTPException(status_code=404, detail=f"District '{district}' not found.")
+    return matched
+
+
+@app.get("/api/locations/ta-grids")
+def get_ta_grids(district: str = Query(None), ta: str = Query(...)):
+    """Return individual grid cell risk data for a specific Traditional Authority."""
+    grids = get_grids_for_ta(ta, district)
+    
+    if not grids:
+        raise HTTPException(status_code=404, detail=f"No grids found for TA '{ta}'")
+        
+    return {
+        "grid_count": len(grids),
+        "traditional_authority": ta,
+        "district": district,
+        "grids": grids
+    }
 
 
 @app.post("/api/pipeline/run")
@@ -267,4 +365,18 @@ def load_results():
         )
 
     with RESULTS_JSON_PATH.open("r", encoding="utf-8") as results_file:
-        return json.load(results_file)
+        return normalize_results(json.load(results_file))
+
+
+def normalize_results(results: list[dict]) -> list[dict]:
+    normalized = []
+    for result in results:
+        row = dict(result)
+        if "dry_spell_probability" not in row:
+            row["dry_spell_probability"] = row.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        if "dry_spell_interpretation" not in row:
+            row["dry_spell_interpretation"] = row.get(LEGACY_DRY_INTERPRETATION_KEY)
+        row.pop(LEGACY_DRY_PROBABILITY_KEY, None)
+        row.pop(LEGACY_DRY_INTERPRETATION_KEY, None)
+        normalized.append(row)
+    return normalized

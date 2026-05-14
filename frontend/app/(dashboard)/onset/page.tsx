@@ -7,9 +7,11 @@ import { CalendarDays, BarChart2, AlertCircle, ChevronDown, X, Wifi } from "luci
 import Image from "next/image"
 import type { DistrictEnvironmentalData } from "@/lib/district-data"
 import type { DistrictSummary } from "@/lib/algorithm-api"
+import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
+import GridGraph from "@/components/grid-graph"
 
 // ─── Timeline marker data ────────────────────────────────────────────────────
-function getMarkers(data: DistrictEnvironmentalData, liveData?: DistrictSummary) {
+function getMarkers(data: DistrictEnvironmentalData, liveData?: { first_detected_onset_date?: string | null, latest_detected_onset_date?: string | null } | null) {
   const formatDate = (d?: string | null) => d ? d.split('T')[0].split(' ')[0] : null;
 
   const p10Date = formatDate(liveData?.first_detected_onset_date) || data.rainfall.p10Date
@@ -142,8 +144,7 @@ function TimelineBar({ markers }: { markers: ReturnType<typeof getMarkers> }) {
 // ─── Page ────────────────────────────────────────────────────────────────────
 export default function OnsetInfoPage() {
   const { user } = useUser()
-  const [selectedDistrict, setSelectedDistrict] = useState<string>("")
-  const [showDistrictMenu, setShowDistrictMenu] = useState(false)
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
   const [districtData, setDistrictData] = useState<DistrictEnvironmentalData | null>(null)
   const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
   const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
@@ -170,72 +171,29 @@ export default function OnsetInfoPage() {
   }, [])
 
   // Set initial district from user profile if user is logged in
-  useEffect(() => {
-    let defaultDistrict = "Lilongwe"
-    if (user?.district) {
-      defaultDistrict = user.district
-    }
-    
-    // Always initialize with a district (user's or fallback)
-    const data = getDistrictData(defaultDistrict)
-    setDistrictData(data)
-    
-    // Match API casing if it exists, otherwise use strictly what was provided
-    const match = liveDistrictData.find(d => d.district.toLowerCase() === defaultDistrict.toLowerCase())
-    setSelectedDistrict(match ? match.district : defaultDistrict)
-  }, [user, liveDistrictData])
+  const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
+  const defaultDistrict = formatDistrict(user?.district)
 
-  // Handle district change
-  const handleDistrictChange = (district: string) => {
-    const data = getDistrictData(district.toLowerCase())
+  useEffect(() => {
+    const activeDistrict = selectedLocation?.district || defaultDistrict
+    const data = getDistrictData(activeDistrict)
     setDistrictData(data)
-    setSelectedDistrict(district)
-    setShowDistrictMenu(false)
+  }, [selectedLocation, defaultDistrict])
+
+  const handleLocationChange = (loc: SelectedLocation) => {
+    setSelectedLocation(loc)
   }
 
-  const availableDistricts = liveDistrictData.length > 0 
-    ? liveDistrictData.map(d => d.district).sort()
-    : ["Lilongwe", "Blantyre", "Dedza", "Zomba", "Mchinji", "Kasungu", "Mangochi", "Salima", "Nkhotakota"].sort()
+  const activeDistrict = selectedLocation?.district || defaultDistrict
 
   if (!districtData) {
     return (
       <div className="space-y-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1
-              className="text-[36px] font-extrabold tracking-tight leading-tight"
-              style={{ color: "#0F2A3D" }}
-            >
-              Rainfall Onset Forecast
-            </h1>
-            <p className="text-[14px] text-[#6b7a8d] mt-1">Select a district to view forecast data</p>
-          </div>
-          
-          {/* District selector dropdown */}
-          <div className="relative">
-            <button
-              onClick={() => setShowDistrictMenu(!showDistrictMenu)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#e2e8f0] bg-white hover:bg-[#f0f4f8] transition-colors"
-            >
-              <span className="text-[13px] font-medium text-[#1a2332]">Select District</span>
-            </button>
-
-            {showDistrictMenu && (
-              <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-lg bg-white border border-[#e2e8f0] shadow-lg max-h-64 overflow-y-auto">
-                {availableDistricts.map((district) => (
-                  <button
-                    key={district}
-                    onClick={() => handleDistrictChange(district)}
-                    className={`w-full px-4 py-2 text-left text-[13px] hover:bg-[#f0f4f8] transition-colors ${
-                      selectedDistrict === district ? "bg-[#E9F5EC] font-semibold text-[#1F7A63]" : "text-[#1a2332]"
-                    }`}
-                  >
-                    {district}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+        <div>
+          <h1 className="text-[36px] font-extrabold tracking-tight leading-tight" style={{ color: "#0F2A3D" }}>
+            Rainfall Onset Forecast
+          </h1>
+          <p className="text-[14px] text-[#6b7a8d] mt-1">Select a grid cell to view rainfall onset diagnostics.</p>
         </div>
 
         <div className="rounded-2xl bg-white p-8 text-center border border-[#e2e8f0]">
@@ -249,8 +207,9 @@ export default function OnsetInfoPage() {
 
 
 
-  const liveSelectedDistrict = liveDistrictData.find(d => d.district === selectedDistrict)
-  const markers = getMarkers(districtData, liveSelectedDistrict)
+  const liveSelectedDistrict = liveDistrictData.find(d => d.district === activeDistrict)
+  const activeLiveData = selectedLocation?.gridData || liveSelectedDistrict
+  const markers = getMarkers(districtData, activeLiveData)
   const optimalStart = markers[0].date
   const optimalEnd = markers[2].date
 
@@ -273,36 +232,24 @@ export default function OnsetInfoPage() {
               </span>
             )}
           </div>
-          <p className="text-[14px] text-[#6b7a8d] mt-1">for {selectedDistrict}</p>
+            <p className="text-[14px] text-[#6b7a8d] mt-1">
+              for {selectedLocation?.ta ? `TA ${selectedLocation.ta}` : activeDistrict}
+            </p>
+          </div>
         </div>
-        
-        {/* District selector dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setShowDistrictMenu(!showDistrictMenu)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#e2e8f0] bg-white hover:bg-[#f0f4f8] transition-colors"
-          >
-            <span className="text-[13px] font-medium text-[#1a2332]">{selectedDistrict}</span>
-            <ChevronDown className="h-4 w-4 text-[#6b7a8d]" />
-          </button>
 
-          {showDistrictMenu && (
-            <div className="absolute right-0 top-full mt-2 z-50 w-48 rounded-lg bg-white border border-[#e2e8f0] shadow-lg max-h-64 overflow-y-auto">
-              {availableDistricts.map((district) => (
-                <button
-                  key={district}
-                  onClick={() => handleDistrictChange(district)}
-                  className={`w-full px-4 py-2 text-left text-[13px] hover:bg-[#f0f4f8] transition-colors ${
-                    selectedDistrict === district ? "bg-[#E9F5EC] font-semibold text-[#1F7A63]" : "text-[#1a2332]"
-                  }`}
-                >
-                  {district}
-                </button>
-              ))}
-            </div>
-          )}
+        {/* ── Location Selector ───────────────────────────────────────────── */}
+        <div className="rounded-2xl p-4 mb-6 border border-[#e2e8f0] bg-white">
+          <LocationSelector
+            onLocationChange={handleLocationChange}
+            defaultDistrict={defaultDistrict}
+          />
         </div>
-      </div>
+
+        {/* ── Grid Graph Visualization ────────────────────────────────────── */}
+        {selectedLocation && selectedLocation.grid && (
+          <GridGraph location={selectedLocation} metricType="onset" />
+        )}
 
 
 
@@ -375,7 +322,7 @@ export default function OnsetInfoPage() {
       >
         <Image
           src="/satellite_farmland.png"
-          alt={`${selectedDistrict} Agricultural Zone — satellite view`}
+          alt={`${activeDistrict} Agricultural Zone — satellite view`}
           fill
           className="object-cover object-center transition-transform duration-500 group-hover:scale-105"
         />
@@ -391,7 +338,7 @@ export default function OnsetInfoPage() {
             Regional Context
           </span>
           <h3 className="text-[22px] font-extrabold text-white mt-1">
-            {selectedDistrict} {districtData.location.zone}
+            {activeDistrict} {districtData.location.zone}
           </h3>
         </div>
       </div>

@@ -3,17 +3,12 @@
 import { useEffect, useRef, useState } from "react"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
-import { fetchDistrictSummary, getApiBaseUrl, type DistrictSummary } from "../../../lib/algorithm-api"
-
-interface LocationData {
-  district: string | null
-  traditionalAuthority: string | null
-  area: string | null
-}
+import { fetchDistrictSummary, fetchGridDiagnostics, fetchBoundaries, type DistrictSummary } from "../../../lib/algorithm-api"
+import type { SelectedLocation } from "@/components/location-selector"
 
 interface FalseOnsetMapProps {
-  selectedLocation: LocationData
-  onLocationChange: (location: LocationData) => void
+  selectedLocation: SelectedLocation | null
+  onLocationChange: (location: SelectedLocation) => void
   userDistrict?: string | null
   onDistrictDataLoad?: (data: DistrictSummary[]) => void
 }
@@ -91,14 +86,10 @@ export default function FalseOnsetMap({
       center: [-13.2543, 34.3015],
       zoom: 7,
       zoomControl: false,
-      attributionControl: true,
+      attributionControl: false,
     })
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap contributors",
-      maxZoom: 19,
-    }).addTo(map.current)
-
+    // No street tiles. We'll show only Malawi admin boundary and the 5km grid overlay.
     L.control.zoom({ position: "topright" }).addTo(map.current)
 
     // Legend
@@ -153,7 +144,7 @@ export default function FalseOnsetMap({
     }
   }, [apiStatus])
 
-  // Draw / redraw district layers whenever districtRiskMap or selection changes
+    // Draw / redraw 5km grid cells whenever districtRiskMap or selection changes
   useEffect(() => {
     if (!isClient || !map.current) return
 
@@ -165,86 +156,116 @@ export default function FalseOnsetMap({
       boundsGeojsonRef.current = null
     }
 
-    // Load boundaries from API
-    async function drawDistricts() {
+    // Load country boundary + grid cells and draw
+    async function drawGridCells() {
       try {
-        const res = await fetch(`${getApiBaseUrl()}/api/boundaries/districts?simplified=true`)
-        if (!res.ok) throw new Error("Failed to fetch boundaries")
-        const geojson = await res.json()
+        // country outline for context
+        const country = await fetchBoundaries("country", true)
+        if (map.current && country && country.features && country.features.length) {
+          const outline = L.geoJSON(country, {
+            style: { color: '#0b3a4a', weight: 2, fillOpacity: 0 }
+          }).addTo(map.current)
+          districtLayers.current.set('country-outline', outline as any)
+          // fit map to country
+          try { map.current.fitBounds((L.geoJSON(country) as any).getBounds(), { padding: [20,20] }) } catch {}
+        }
 
+        // fetch district boundaries as reference overlay
+        const districts = await fetchBoundaries("districts", true)
+        if (map.current && districts && districts.features) {
+          const districtLayer = L.geoJSON(districts, {
+            style: { color: '#4b5563', weight: 1.5, fillOpacity: 0, dashArray: '4,4' },
+            onEachFeature: (feature: any, layer: any) => {
+              const distName = feature.properties?.DISTRICT || feature.properties?.name || '–'
+              layer.bindPopup(`<div style="font-family:Inter,sans-serif;font-size:13px;color:#0d2f3f;"><strong>${distName}</strong></div>`)
+            }
+          }).addTo(map.current)
+          districtLayers.current.set('districts-overlay', districtLayer as any)
+        }
+
+        const grid = await fetchGridDiagnostics({ limit: 12000, source_grid: 'esri_5km_v1' })
         if (!map.current) return
 
-        const layer = L.geoJSON(geojson, {
+        const gridLayer = L.geoJSON(grid as any, {
           style: (feature) => {
-            const name = feature?.properties?.shapeName as string
-            const districtData = districtRiskMap[name]
-            const prob = districtData?.overall_risk_probability ?? 0
-            const color = getFalseOnsetColor(prob)
-            const isSelected = selectedLocation.district === name
-            const isUser = userDistrict?.toLowerCase() === name?.toLowerCase()
-
+            const prob = feature?.properties?.false_onset_probability ?? feature?.properties?.false_onset_prob ?? 0
+            const color = getFalseOnsetColor(Number(prob))
+            const isSelected = (selectedLocation?.grid === feature?.properties?.grid_id) || (selectedLocation?.district === feature?.properties?.district_name)
             return {
               fillColor: color,
-              color: isSelected ? "#ffffff" : isUser ? "#2563eb" : "#ffffff",
-              weight: isSelected ? 3.5 : isUser ? 2.5 : 1,
-              opacity: isSelected ? 1 : isUser ? 0.9 : 0.6,
-              fillOpacity: isSelected ? 0.92 : 0.7,
+              color: isSelected ? '#ffffff' : '#ffffff',
+              weight: isSelected ? 2.5 : 0.5,
+              opacity: isSelected ? 1 : 0.6,
+              fillOpacity: isSelected ? 0.9 : 0.7,
             }
           },
-          onEachFeature: (feature: any, featureLayer: any) => {
-            const name = feature.properties?.shapeName as string
-            const districtData = districtRiskMap[name]
-            const prob = districtData?.overall_risk_probability
-            const label = prob !== undefined ? getRiskLabel(prob) : "No data"
-            const probText = prob !== undefined ? `${(prob * 100).toFixed(1)}%` : "–"
+            onEachFeature: (feature: any, featureLayer: any) => {
+            const props = feature.properties || {}
+            const gid = props.grid_id || props.grid || props.gridId || '–'
+            const prob = props.false_onset_probability ?? props.false_onset_prob
+            const probText = typeof prob === 'number' ? `${(prob * 100).toFixed(1)}%` : '–'
 
             featureLayer.bindTooltip(
               `<div style="font-family:Inter,sans-serif;font-size:12px;">
-                <strong style="color:#0d2f3f;">${name}</strong><br/>
-                <span style="color:#6b7a8d;">False-Onset Risk:</span> <strong>${label}</strong><br/>
-                <span style="color:#6b7a8d;">Probability:</span> ${probText}
+                <strong style="color:#0d2f3f;">Grid ${gid}</strong><br/>
+                <span style="color:#6b7a8d;">False-Onset Prob:</span> ${probText}
               </div>`,
-              { direction: "top", sticky: true }
+              { direction: 'top', sticky: true }
             )
 
-            featureLayer.on("click", () => {
-              onLocationChange({ district: name, traditionalAuthority: null, area: null })
-            })
-            featureLayer.on("mouseover", function (this: any) {
-              this.setStyle({ weight: 3, fillOpacity: 0.92 })
-            })
-            featureLayer.on("mouseout", function (this: any) {
-              const isSelected = selectedLocation.district === name
-              const isUser = userDistrict?.toLowerCase() === name?.toLowerCase()
-              this.setStyle({
-                weight: isSelected ? 3.5 : isUser ? 2.5 : 1,
-                fillOpacity: isSelected ? 0.92 : 0.7,
+            featureLayer.bindPopup(
+              `<div style="font-family:Inter,sans-serif;font-size:13px;color:#0d2f3f;">
+                <strong>Grid ${gid}</strong><br/>
+                <span style="color:#6b7a8d;font-size:12px;">
+                  District: ${props.district_name || '–'}<br/>
+                  False-Onset Prob: <strong>${probText}</strong><br/>
+                  Onset Prob: <strong>${typeof props.onset_probability === 'number' ? (props.onset_probability * 100).toFixed(1) : '–'}%</strong><br/>
+                  Dry Spell Prob: <strong>${typeof props.dry_spell_probability === 'number' ? (props.dry_spell_probability * 100).toFixed(1) : '–'}%</strong>
+                </span>
+              </div>`
+            )
+
+            featureLayer.on('click', async () => {
+              const seasons = props.seasons_analyzed ?? 0
+              onLocationChange({
+                district: props.district_name || "Unknown",
+                ta: null,
+                taData: null,
+                grid: String(gid),
+                areaName: props.grid_code || String(gid),
+                gridData: {
+                  grid_id: String(gid),
+                  latitude: Number(props.centroid_lat ?? 0),
+                  longitude: Number(props.centroid_lon ?? 0),
+                  overall_risk_level: props.overall_risk_level ?? 'Low',
+                  false_onset_probability: props.false_onset_probability ?? 0,
+                  dry_spell_probability: props.dry_spell_probability ?? 0,
+                  onset_probability: props.onset_probability ?? 0,
+                  seasons_analyzed: seasons,
+                  seasons_with_detected_onset: props.seasons_with_detected_onset ?? 0,
+                  first_detected_onset_date: props.first_detected_onset_date ?? null,
+                  latest_detected_onset_date: props.latest_detected_onset_date ?? null,
+                  false_onset_interpretation: props.false_onset_interpretation ?? "",
+                  dry_spell_interpretation: props.dry_spell_interpretation ?? "",
+                },
               })
             })
 
-            districtLayers.current.set(name, featureLayer)
-          },
-        }).addTo(map.current!)
+            featureLayer.on('mouseover', function (this: any) { this.setStyle({ weight: 1.5, fillOpacity: 0.92 }) })
+            featureLayer.on('mouseout', function (this: any) { this.setStyle({ weight: 0.5, fillOpacity: 0.7 }) })
 
-        boundsGeojsonRef.current = layer
-
-        // Pan to selected district
-        if (selectedLocation.district) {
-          const selFeature = geojson.features.find(
-            (f: any) => f.properties?.shapeName === selectedLocation.district
-          )
-          if (selFeature && map.current) {
-            const bounds = L.geoJSON(selFeature).getBounds()
-            map.current.fitBounds(bounds, { padding: [20, 20], maxZoom: 10 })
+            districtLayers.current.set(gid, featureLayer)
           }
-        }
-      } catch {
-        // fallback: just show Malawi center
+        }).addTo(map.current)
+
+        boundsGeojsonRef.current = gridLayer
+      } catch (err) {
+        // fallback: do nothing
       }
     }
 
-    drawDistricts()
-  }, [isClient, districtRiskMap, selectedLocation.district, userDistrict, onLocationChange])
+    drawGridCells()
+  }, [isClient, districtRiskMap, userDistrict, onLocationChange, selectedLocation])
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "400px" }}>

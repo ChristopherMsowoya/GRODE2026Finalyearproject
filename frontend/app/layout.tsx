@@ -1,18 +1,11 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { UserProvider } from '@/lib/user-context'
 import './globals.css'
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800", "900"],
-  variable: "--font-inter",
-});
-
 export const metadata: Metadata = {
   title: 'GRODE-Climate Intelligent System',
-  description: 'Early-Season Rainfall Intelligence for Malawi farmers. Monitor onset patterns, false-onset risk, and crop stress to optimize planting decisions.',
+  description: 'Early-Season Rainfall Intelligence for Malawi farmers. Monitor onset patterns, false-onset risk, and dry spell to optimize planting decisions.',
   icons: {
     icon: [
       {
@@ -39,7 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} antialiased`}>
+      <body className="antialiased">
         <UserProvider>
           {children}
         </UserProvider>

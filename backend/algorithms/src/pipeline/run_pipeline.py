@@ -12,7 +12,7 @@ from processing.grid_extractor import DEFAULT_BOUNDS, iter_grids_fast
 from utils.timeseries_utils import split_by_year
 from algorithms.onset import detect_onset_details_fast
 from algorithms.false_onset import calculate_false_onset_fast
-from algorithms.crop_stress import calculate_stress_fast
+from algorithms.dry_spell import calculate_stress_fast
 from models.result_schema import build_result
 
 # DB integration: write pipeline run + per-grid JSON results linked to nearest grid_cells

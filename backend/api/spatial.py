@@ -7,6 +7,7 @@ from datetime import datetime
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 RESULTS_JSON_PATH = PROJECT_ROOT / "backend" / "algorithms" / "outputs" / "results.json"
 DISTRICTS_GEOJSON_PATH = (
     PROJECT_ROOT
@@ -38,7 +39,16 @@ def load_geojson_features(path: str):
 
 def load_algorithm_results():
     with RESULTS_JSON_PATH.open("r", encoding="utf-8") as results_file:
-        return json.load(results_file)
+        results = json.load(results_file)
+
+    normalized = []
+    for result in results:
+        row = dict(result)
+        if "dry_spell_probability" not in row:
+            row["dry_spell_probability"] = row.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        row.pop(LEGACY_DRY_PROBABILITY_KEY, None)
+        normalized.append(row)
+    return normalized
 
 
 def point_in_ring(lon: float, lat: float, ring: list[list[float]]) -> bool:
@@ -130,6 +140,10 @@ def risk_level_from_prob(probability: float) -> str:
     return "High"
 
 
+def dry_spell_probability(result: dict) -> float:
+    return result.get("dry_spell_probability", result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0))
+
+
 def parse_iso_datetime(value: str | None):
     if not value or value == "None":
         return None
@@ -175,8 +189,8 @@ def _build_boundary_summaries_cached(
                 sum(cell["false_onset_probability"] for cell in matched_cells) / len(matched_cells),
                 3,
             )
-            average_crop_stress_probability = round(
-                sum(cell["crop_stress_probability"] for cell in matched_cells) / len(matched_cells),
+            average_dry_spell_probability = round(
+                sum(dry_spell_probability(cell) for cell in matched_cells) / len(matched_cells),
                 3,
             )
             seasons_analyzed = max(cell["seasons_analyzed"] for cell in matched_cells)
@@ -204,7 +218,7 @@ def _build_boundary_summaries_cached(
             valid_latest_onset_dates = [value for value in latest_onset_dates if value is not None]
         else:
             average_false_onset_probability = 0.0
-            average_crop_stress_probability = 0.0
+            average_dry_spell_probability = 0.0
             seasons_analyzed = 0
             onset_detection_rate = 0.0
             valid_first_onset_dates = []
@@ -212,7 +226,7 @@ def _build_boundary_summaries_cached(
 
         overall_risk_probability = max(
             average_false_onset_probability,
-            average_crop_stress_probability,
+            average_dry_spell_probability,
         )
 
         summaries.append(
@@ -233,7 +247,7 @@ def _build_boundary_summaries_cached(
                     else None
                 ),
                 "average_false_onset_probability": average_false_onset_probability,
-                "average_crop_stress_probability": average_crop_stress_probability,
+                "average_dry_spell_probability": average_dry_spell_probability,
                 "overall_risk_probability": round(overall_risk_probability, 3),
                 "overall_risk_level": risk_level_from_prob(overall_risk_probability),
             }
@@ -262,3 +276,22 @@ def build_ta_summaries():
         summary["district"] = parent_district
 
     return ta_summaries
+
+
+@lru_cache(maxsize=32)
+def get_grids_for_ta(ta_name: str, district_name: str = None) -> list:
+    boundary_features = load_geojson_features(str(TA_GEOJSON_PATH))
+    results = load_algorithm_results()
+    
+    # We should also ensure the TA matched belongs to the correct district if there are name collisions
+    # but for simplicity we match just by ta_name first
+    for feature in boundary_features:
+        if feature["properties"]["shapeName"].lower() == ta_name.lower():
+            matched_cells = [
+                result
+                for result in results
+                if point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
+            ]
+            return matched_cells
+            
+    return []

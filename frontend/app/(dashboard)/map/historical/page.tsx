@@ -69,7 +69,7 @@ export default function HistoricalPage() {
   
   const chartData = districtData ? [
     { name: "False Onset Probability", value: Math.round(districtData.average_false_onset_probability * 100), highlight: districtData.average_false_onset_probability > 0.4 },
-    { name: "Crop Stress Probability", value: Math.round(districtData.average_crop_stress_probability * 100), highlight: districtData.average_crop_stress_probability > 0.4 },
+    { name: "Dry Spell Probability", value: Math.round(districtData.average_dry_spell_probability * 100), highlight: districtData.average_dry_spell_probability > 0.4 },
     { name: "Onset Detection Rate", value: Math.round(districtData.onset_detection_rate * 100), highlight: false },
     { name: "Overall Risk Likelihood", value: Math.round(districtData.overall_risk_probability * 100), highlight: districtData.overall_risk_probability > 0.4 },
   ] : []
@@ -226,7 +226,7 @@ export default function HistoricalPage() {
 
       {/* ── Bottom 3-column metrics ───────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-5">
-        <MetricCard label="Stability Score"     value={districtData ? `${(100 - (districtData.average_crop_stress_probability * 100)).toFixed(0)}%` : "84%"}  badge={districtData?.overall_risk_level === 'High' ? "At Risk" : "Stable"}     badgeColor={districtData?.overall_risk_level === 'High' ? "#D64545" : "#1F7A63"} borderColor={districtData?.overall_risk_level === 'High' ? "#D64545" : "#1F7A63"} />
+        <MetricCard label="Stability Score"     value={districtData ? `${(100 - (districtData.average_dry_spell_probability * 100)).toFixed(0)}%` : "84%"}  badge={districtData?.overall_risk_level === 'High' ? "At Risk" : "Stable"}     badgeColor={districtData?.overall_risk_level === 'High' ? "#D64545" : "#1F7A63"} borderColor={districtData?.overall_risk_level === 'High' ? "#D64545" : "#1F7A63"} />
         <MetricCard label="Dry Spell Likelihood" value={districtData ? `${(districtData.average_false_onset_probability * 100).toFixed(1)}%` : "24%"}  unit="Propensity"  badge=""             badgeColor="#F4A261" borderColor="#F4A261" />
         <MetricCard label="Grid Cells Tracked"    value={districtData ? `${districtData.grid_cell_count}` : "High"} badge="Coverage" badgeColor="#0F2A3D" borderColor="#0F2A3D" />
       </div>

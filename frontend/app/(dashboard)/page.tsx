@@ -1,11 +1,12 @@
 "use client"
 
-import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight, Wifi } from "lucide-react"
+import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useUser } from "@/lib/user-context"
 import { fetchDistrictSummary, type DistrictSummary } from "@/lib/algorithm-api"
+import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 
 function SunRingIcon() {
   return (
@@ -179,6 +180,7 @@ export default function DashboardPage() {
   const { user } = useUser()
   const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
   const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
 
   useEffect(() => {
     let cancelled = false;
@@ -200,11 +202,34 @@ export default function DashboardPage() {
     return () => { cancelled = true }
   }, [])
 
+  const handleLocationChange = useCallback((loc: SelectedLocation) => {
+    setSelectedLocation(loc)
+  }, [])
+
   const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
   const defaultDistrict = formatDistrict(user?.district)
-  const districtRiskData = liveDistrictData.find(d => d.district === defaultDistrict)
 
-  const foProb = districtRiskData ? (districtRiskData.overall_risk_probability || 0) : 0.90
+  // Use TA data if a TA is selected, otherwise fall back to district data
+  const activeDistrict = selectedLocation?.district || defaultDistrict
+  const districtRiskData = liveDistrictData.find(d => d.district === activeDistrict)
+
+  // If a specific TA is selected, use its risk data
+  const taData = selectedLocation?.taData
+  const effectiveRiskData = taData
+    ? {
+        overall_risk_probability: taData.average_false_onset_probability,
+        average_false_onset_probability: taData.average_false_onset_probability,
+        average_dry_spell_probability: taData.average_dry_spell_probability,
+        grid_cell_count: taData.grid_cell_count,
+        seasons_analyzed: 4,
+      }
+    : districtRiskData
+
+  const displayLabel = taData
+    ? `TA ${selectedLocation?.ta}`
+    : activeDistrict
+
+  const foProb = effectiveRiskData ? (effectiveRiskData.average_false_onset_probability || 0) : 0.90
   const foLevel = foProb > 0.6 ? "HIGH" : foProb > 0.3 ? "MED" : "LOW"
   const foColor = foProb > 0.6 ? "#D64545" : foProb > 0.3 ? "#F4A261" : "#1F7A63"
   const foPercent = (foProb * 100).toFixed(0) + "%"
@@ -216,7 +241,7 @@ export default function DashboardPage() {
     foMessage = `There is a moderate ${foPercent} probability of intermittent dry spells. Farmers should ensure resilient crop varieties or supplementary water availability.`
   }
 
-  const csProb = districtRiskData ? (districtRiskData.average_crop_stress_probability || 0) : 0.45
+  const csProb = effectiveRiskData ? (effectiveRiskData.average_dry_spell_probability || 0) : 0.45
   const csLevel = csProb > 0.6 ? "HIGH" : csProb > 0.3 ? "MED" : "LOW"
   const csColor = csProb > 0.6 ? "#D64545" : csProb > 0.3 ? "#F4A261" : "#1F7A63"
 
@@ -290,6 +315,17 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ─── Location Selector ───────────────────────────────────────────── */}
+      <div
+        className="rounded-2xl p-4"
+        style={{ background: "white", boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)" }}
+      >
+        <LocationSelector
+          onLocationChange={handleLocationChange}
+          defaultDistrict={defaultDistrict}
+        />
+      </div>
+
       {/* ─── API Statistics Layout ─────────────────────────────────────── */}
       <div className="flex items-center gap-4 text-[13px] text-[#6b7a8d] font-medium px-1">
         <div className="flex items-center gap-1.5">
@@ -298,11 +334,11 @@ export default function DashboardPage() {
         </div>
         <span className="opacity-40">|</span>
         <span>
-          <strong className="text-[#0F2A3D]">{districtRiskData?.grid_cell_count || 128}</strong> Grids Analyzed
+          <strong className="text-[#0F2A3D]">{effectiveRiskData?.grid_cell_count || 128}</strong> Grids Analyzed
         </span>
         <span className="opacity-40">|</span>
         <span>
-          <strong className="text-[#0F2A3D]">{districtRiskData?.seasons_analyzed || 40}</strong> Seasons Validated
+          <strong className="text-[#0F2A3D]">{effectiveRiskData?.seasons_analyzed || 4}</strong> Seasons Validated
         </span>
       </div>
 
@@ -316,7 +352,7 @@ export default function DashboardPage() {
         >
           <div className="mb-5 flex items-center justify-between">
             <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">
-              Onset Status ({defaultDistrict})
+              Onset Status ({displayLabel})
             </span>
             <button className="rounded-full p-1 text-[#6b7a8d] transition-colors hover:text-[#0F2A3D] hover:bg-[#f0f4f8]">
               <Info className="h-4 w-4" />
@@ -357,7 +393,7 @@ export default function DashboardPage() {
         >
           <div className="mb-5 flex items-center justify-between">
             <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">
-              False-Onset Risk ({defaultDistrict})
+              False-Onset Risk ({displayLabel})
             </span>
             <span
               className="flex h-6 w-6 items-center justify-center rounded-full text-[13px] font-bold text-white bg-opacity-90"
@@ -399,14 +435,14 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Crop Stress Risk */}
+        {/* Dry Spell Risk */}
         <div
           className="card-hover rounded-2xl bg-white p-6"
           style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)", borderLeft: `4px solid ${csColor}` }}
         >
           <div className="mb-5 flex items-center justify-between">
             <span className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-[#6b7a8d]">
-              Crop Stress Risk ({defaultDistrict})
+              Dry Spell Risk ({displayLabel})
             </span>
             <button className="rounded-full p-1 text-[#6b7a8d] transition-colors hover:text-[#0F2A3D] hover:bg-[#f0f4f8]">
               <HelpCircle className="h-4 w-4" />

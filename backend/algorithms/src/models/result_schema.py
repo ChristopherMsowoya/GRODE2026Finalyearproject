@@ -23,14 +23,14 @@ def build_result(
         "first_detected_onset_date": stringify_date(first_onset_date),
         "latest_detected_onset_date": stringify_date(latest_onset_date),
         "false_onset_probability": round(false_prob, 3),
-        "crop_stress_probability": round(stress_prob, 3),
+        "dry_spell_probability": round(stress_prob, 3),
         "overall_risk_level": classify_risk(max_risk),
         "false_onset_interpretation": describe_probability(
             false_prob,
             seasons_analyzed,
             "onset was followed by a 10+ day dry spell"
         ),
-        "crop_stress_interpretation": describe_probability(
+        "dry_spell_interpretation": describe_probability(
             stress_prob,
             seasons_analyzed,
             "onset was followed by a 5+ day dry spell"

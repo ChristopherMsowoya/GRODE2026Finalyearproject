@@ -233,8 +233,8 @@ export default function DetailsPage() {
                         <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.false_onset_probability * 100).toFixed(1)}%</p>
                       </div>
                       <div className="rounded-xl bg-white p-3 border border-[#e9edf1]">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">Crop Stress</p>
-                        <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.crop_stress_probability * 100).toFixed(1)}%</p>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">Dry Spell</p>
+                        <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.dry_spell_probability * 100).toFixed(1)}%</p>
                       </div>
                     </div>
                   )}

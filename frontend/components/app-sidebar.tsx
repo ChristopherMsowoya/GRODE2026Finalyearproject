@@ -16,7 +16,7 @@ const navItems = [
   { name: "Map",              href: "/map",          icon: Map             },
   { name: "Onset Info",       href: "/onset",        icon: Sun             },
   { name: "False-Onset",      href: "/false-onset",  icon: AlertTriangle   },
-  { name: "Crop Stress",      href: "/crop-stress",  icon: Sprout          },
+  { name: "Dry Spell",        href: "/dry-spell",    icon: Sprout          },
   { name: "Community",        href: "/community",    icon: Users           },
   { name: "Subscription",     href: "/subscription", icon: Crown           },
 ]

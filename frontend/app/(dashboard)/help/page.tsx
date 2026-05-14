@@ -114,7 +114,7 @@ const GUIDES = [
     icon: Sprout,
     color: "#D64545",
     bg: "rgba(214,69,69,0.08)",
-    title: "Crop Stress Mitigation",
+    title: "Dry Spell Mitigation",
     desc: "Protocols for heat stress, pest pressure, and flood risk management.",
     tag: "Advanced",
   },

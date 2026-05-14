@@ -11,6 +11,8 @@ import type { DistrictEnvironmentalData } from "../../../lib/district-data"
 import type { DistrictSummary } from "../../../lib/algorithm-api"
 import malawiDistrictsData from "../../../lib/data/malawiDistricts.json"
 import malawiAdministrativeData from "../../../lib/data/malawiAdministrativeData.json"
+import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
+import GridGraph from "@/components/grid-graph"
 const FalseOnsetMap = dynamic(() => import("./false-onset-map"), { ssr: false })
 
 function RiskMeter({ riskLevel = "caution", probability }: { riskLevel?: string, probability?: number }) {
@@ -80,69 +82,12 @@ function RiskMeter({ riskLevel = "caution", probability }: { riskLevel?: string,
   )
 }
 
-interface LocationData {
-  district: string | null
-  traditionalAuthority: string | null
-  area: string | null
-}
-
-function LocationSelector({
-  selectedLocation,
-  onLocationChange,
-  onClose,
-  liveDistricts
-}: {
-  selectedLocation: LocationData
-  onLocationChange: (location: LocationData) => void
-  onClose: () => void
-  liveDistricts?: string[]
-}) {
-  const defaultDistricts = malawiAdministrativeData.districts.map(d => d.name)
-  const districts = liveDistricts && liveDistricts.length > 0 ? liveDistricts : defaultDistricts
-
-  const handleDistrictSelect = (district: string) => {
-    onLocationChange({ district, traditionalAuthority: null, area: null })
-    onClose()
-  }
-
-  return (
-    <div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-[12px] shadow-lg border border-[#e2e8f0] z-50">
-      <div className="p-4 border-b border-[#e2e8f0] flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-[#0F2A3D]">Select District</h3>
-        <button onClick={onClose} className="text-[#6b7a8d] hover:text-[#0F2A3D]">
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="max-h-64 overflow-y-auto p-2">
-        {districts.map(district => (
-          <button
-            key={district}
-            onClick={() => handleDistrictSelect(district)}
-            className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
-              selectedLocation.district === district 
-                ? "bg-[#eef2f4] font-semibold text-[#0F2A3D]" 
-                : "text-[#6b7a8d] hover:bg-[#f8fafb] hover:text-[#0F2A3D]"
-            }`}
-          >
-            {district}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 export default function FalseOnsetRiskPage() {
   const router = useRouter()
   const { user } = useUser()
-  const [selectedLocation, setSelectedLocation] = useState<LocationData>({
-    district: null,
-    traditionalAuthority: null,
-    area: null
-  })
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
   const [districtData, setDistrictData] = useState<DistrictEnvironmentalData | null>(null)
-  const [showLocationSelector, setShowLocationSelector] = useState(false)
   const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
   const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
 
@@ -151,85 +96,38 @@ export default function FalseOnsetRiskPage() {
     setLiveStatus("live")
   }, [])
 
+  const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
+  const defaultDistrict = formatDistrict(user?.district)
+
   // Find live data for the selected district
-  const liveSelectedDistrict = selectedLocation.district
-    ? liveDistrictData.find(d => d.district === selectedLocation.district)
-    : null
+  const activeDistrict = selectedLocation?.district || defaultDistrict
+  const liveSelectedDistrict = liveDistrictData.find(d => d.district === activeDistrict) || null
 
-  // Set default to user's district on mount
   useEffect(() => {
-    let defaultDistrict = "Lilongwe"
-    if (user?.district) {
-      const districtMap: Record<string, string> = {
-        lilongwe: "Lilongwe",
-        blantyre: "Blantyre",
-        dedza: "Dedza",
-        zomba: "Zomba",
-        mchinji: "Mchinji",
-        kasungu: "Kasungu",
-        mangochi: "Mangochi",
-        salima: "Salima",
-        nkhotakota: "Nkhotakota"
-      }
-      defaultDistrict = districtMap[user.district.toLowerCase()] || (user.district.charAt(0).toUpperCase() + user.district.slice(1).toLowerCase())
-    }
+    const data = getDistrictData(activeDistrict.toLowerCase())
+    setDistrictData(data)
+  }, [activeDistrict])
 
-    if (!selectedLocation.district) {
-      setSelectedLocation({ 
-        district: defaultDistrict, 
-        traditionalAuthority: null, 
-        area: null 
-      })
-      
-      const data = getDistrictData(defaultDistrict.toLowerCase())
-      setDistrictData(data)
-    }
-  }, [user?.district])
-
-  const handleLocationChange = (location: LocationData) => {
-    setSelectedLocation(location)
-    // Update district data when district changes
-    if (location.district) {
-      const data = getDistrictData(location.district.toLowerCase())
-      setDistrictData(data)
-    }
+  const handleLocationChange = (loc: SelectedLocation) => {
+    setSelectedLocation(loc)
   }
 
-  // Get data for selected area (most granular level)
-  const getSelectedAreaData = () => {
-    if (!selectedLocation.district || !selectedLocation.traditionalAuthority || !selectedLocation.area) {
-      // Fallback to district level if area not selected
-      if (selectedLocation.district) {
-        const district = (malawiDistrictsData as any).features.find(
-          (f: any) => f.properties.name === selectedLocation.district
-        )
-        return district ? district.properties : null
-      }
-      return null
-    }
+  // We don't have villages mapped to areas, so we use TA or district data
+  // When a TA is selected, we could show TA data if we had it loaded here.
+  // The Map handles TA/Grid selection automatically since it's wired to the same api.
 
-    // Get area-specific data
-    const district = malawiAdministrativeData.districts.find(d => d.name === selectedLocation.district)
-    const ta = district?.traditionalAuthorities.find(t => t.name === selectedLocation.traditionalAuthority)
-    const area = ta?.areas.find(a => a.name === selectedLocation.area)
-    return area || null
-  }
-
-  const areaData = getSelectedAreaData()
-
-  // Get risk level — prefer live API data
   const getRiskLevel = () => {
+    if (selectedLocation?.gridData) {
+      const prob = selectedLocation.gridData.false_onset_probability
+      return prob > 0.6 ? 'alert' : prob > 0.3 ? 'caution' : 'optimal'
+    }
+    if (selectedLocation?.taData) {
+      const level = selectedLocation.taData.overall_risk_level
+      return level === 'High' ? 'alert' : level === 'Medium' ? 'caution' : 'optimal'
+    }
     if (liveSelectedDistrict) {
       const level = liveSelectedDistrict.overall_risk_level
       return level === 'High' ? 'alert' : level === 'Medium' ? 'caution' : 'optimal'
-    }
-    if (areaData && (areaData as any).riskLevel) {
-      return (areaData as any).riskLevel
-    }
-    if (districtData) {
-      return districtData.riskAssessment.falseOnsetRisk === 'high' ? 'alert' 
-             : districtData.riskAssessment.falseOnsetRisk === 'medium' ? 'caution' 
-             : 'optimal'
     }
     return 'caution'
   }
@@ -269,33 +167,16 @@ export default function FalseOnsetRiskPage() {
             <div className="rounded-full bg-[#fef3e0] px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.24em]" style={{ color: "#d97706" }}>
               {getRiskLevelText(getRiskLevel())} Risk Zone
             </div>
-            <div className="relative">
-              <button
-                onClick={() => setShowLocationSelector(!showLocationSelector)}
-                className="flex items-center gap-3 rounded-full border border-[#d8dee4] bg-[#f8fafb] px-4 py-3 hover:bg-[#f0f2f4] transition-colors"
-              >
-                <MapPin className="h-4 w-4 text-[#0b3a4a]" />
-                <span className="text-sm font-medium text-[#0F2A3D]">
-                  {selectedLocation.area
-                    ? `${selectedLocation.area}`
-                    : selectedLocation.traditionalAuthority
-                    ? `${selectedLocation.traditionalAuthority}`
-                    : selectedLocation.district || 'Select Location'}
-                </span>
-                <ChevronDown className="h-4 w-4 text-[#6b7a8d]" />
-              </button>
-              {showLocationSelector && (
-                <LocationSelector
-                  selectedLocation={selectedLocation}
-                  onLocationChange={handleLocationChange}
-                  onClose={() => setShowLocationSelector(false)}
-                  liveDistricts={liveDistrictData.map(d => d.district).sort()}
-                />
-              )}
-            </div>
           </div>
         </div>
 
+        {/* ── Location Selector ───────────────────────────────────────────── */}
+        <div className="mt-6 pt-6 border-t border-[#e2e8f0]">
+          <LocationSelector
+            onLocationChange={handleLocationChange}
+            defaultDistrict={defaultDistrict}
+          />
+        </div>
 
       </div>
 
@@ -311,6 +192,11 @@ export default function FalseOnsetRiskPage() {
               onDistrictDataLoad={handleDistrictDataLoad}
             />
           </div>
+
+          {/* ── Grid Graph Visualization ────────────────────────────────────── */}
+          {selectedLocation && selectedLocation.grid && (
+            <GridGraph location={selectedLocation} metricType="false_onset" />
+          )}
         </div>
 
         {/* Right Panel: Live Risk Stats Panel */}
@@ -327,15 +213,25 @@ export default function FalseOnsetRiskPage() {
                 <div className="flex flex-col gap-4">
                   <div className="rounded-[14px] bg-[#fdf8f2] p-4 border border-[#f1e6d0]">
                     <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">False-Onset Prob.</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">{(liveSelectedDistrict.overall_risk_probability * 100).toFixed(1)}%</p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">
+                      {selectedLocation?.gridData 
+                        ? (selectedLocation.gridData.false_onset_probability * 100).toFixed(1) 
+                        : selectedLocation?.taData 
+                          ? (selectedLocation.taData.average_false_onset_probability * 100).toFixed(1) 
+                          : (liveSelectedDistrict.average_false_onset_probability * 100).toFixed(1)}%
+                    </p>
                   </div>
                   <div className="rounded-[14px] bg-[#f0fdf4] p-4 border border-[#bbf7d0]">
                     <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Grid Cells Analysed</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">{liveSelectedDistrict.grid_cell_count}</p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">
+                      {selectedLocation?.gridData ? 1 : selectedLocation?.taData ? selectedLocation.taData.grid_cell_count : liveSelectedDistrict.grid_cell_count}
+                    </p>
                   </div>
                   <div className="rounded-[14px] bg-[#f0f4ff] p-4 border border-[#c7d2fe]">
                     <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Seasons Analysed</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">{liveSelectedDistrict.seasons_analyzed} <span className="text-[14px] font-medium text-[#6b7a8d]">seasons</span></p>
+                    <p className="text-[24px] font-bold text-[#0F2A3D]">
+                      {selectedLocation?.gridData ? selectedLocation.gridData.seasons_analyzed : liveSelectedDistrict.seasons_analyzed} <span className="text-[14px] font-medium text-[#6b7a8d]">seasons</span>
+                    </p>
                   </div>
                 </div>
               </div>
@@ -381,7 +277,7 @@ export default function FalseOnsetRiskPage() {
                             'Low risk conditions. Safe for planting.'}
                         </p>
                         <p className="mt-1.5 text-[13px] leading-relaxed text-[#6b7a8d]">
-                          {`The current weather patterns suggest a ${(liveSelectedDistrict.overall_risk_probability * 100).toFixed(0)}% probability of a dry spell following initial rains. ${
+                          {`The current weather patterns suggest a high probability of a dry spell following initial rains. ${
                             getRiskLevel() === 'alert' ?
                               'Planting now may result in total crop loss during the upcoming dry spell.' :
                             getRiskLevel() === 'caution' ?

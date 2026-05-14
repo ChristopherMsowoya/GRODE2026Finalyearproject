@@ -47,7 +47,8 @@ def resolve_chirps_files(path_or_dir):
     path = Path(path_or_dir).expanduser().resolve()
 
     if path.is_dir():
-        patterns = ("chirps-v*.nc", "CHIRPS*.nc")
+        # Match various CHIRPS naming conventions plus generic *.nc fallback
+        patterns = ("chirps-v*.nc", "CHIRPS*.nc", "CHIRPS_*.nc", "*.nc")
         file_set = {
             filepath.resolve()
             for pattern in patterns

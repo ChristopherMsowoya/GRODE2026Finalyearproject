@@ -1,4 +1,4 @@
-# algorithms/crop_stress.py
+# algorithms/dry_spell.py
 
 from utils.timeseries_utils import detect_dry_spells_vectorized
 

@@ -7,10 +7,10 @@ export interface AlgorithmResult {
   first_detected_onset_date: string | null
   latest_detected_onset_date: string | null
   false_onset_probability: number
-  crop_stress_probability: number
+  dry_spell_probability: number
   overall_risk_level: "Low" | "Medium" | "High"
   false_onset_interpretation: string
-  crop_stress_interpretation: string
+  dry_spell_interpretation: string
 }
 
 export interface AlgorithmSummary {
@@ -22,7 +22,7 @@ export interface AlgorithmSummary {
     High: number
   }
   average_false_onset_probability: number
-  average_crop_stress_probability: number
+  average_dry_spell_probability: number
   highest_risk_cells: AlgorithmResult[]
 }
 
@@ -35,7 +35,7 @@ export interface DistrictSummary {
   first_detected_onset_date: string | null
   latest_detected_onset_date: string | null
   average_false_onset_probability: number
-  average_crop_stress_probability: number
+  average_dry_spell_probability: number
   overall_risk_probability: number
   overall_risk_level: "Low" | "Medium" | "High"
 }
@@ -55,7 +55,7 @@ export interface TraditionalAuthoritySummary {
   first_detected_onset_date: string | null
   latest_detected_onset_date: string | null
   average_false_onset_probability: number
-  average_crop_stress_probability: number
+  average_dry_spell_probability: number
   overall_risk_probability: number
   overall_risk_level: "Low" | "Medium" | "High"
 }
@@ -105,6 +105,28 @@ export interface GeoJsonFeature {
     type: string
     coordinates: unknown
   }
+}
+
+export type DiagnosticLayer = "onset" | "false_onset" | "dry_spell"
+
+export interface GridDiagnosticProperties {
+  grid_id: string
+  grid_code?: string | null
+  centroid_lat?: number | null
+  centroid_lon?: number | null
+  latitude?: number | null
+  longitude?: number | null
+  district_name?: string | null
+  seasons_analyzed?: number | null
+  seasons_with_detected_onset?: number | null
+  first_detected_onset_date?: string | null
+  latest_detected_onset_date?: string | null
+  onset_probability?: number | null
+  false_onset_probability?: number | null
+  dry_spell_probability?: number | null
+  false_onset_interpretation?: string | null
+  dry_spell_interpretation?: string | null
+  overall_risk_level?: "Low" | "Medium" | "High" | null
 }
 
 export interface GeoJsonFeatureCollection {
@@ -229,6 +251,17 @@ export function fetchGridCells(params?: { limit?: number; offset?: number; sourc
   return apiFetch<any>(path).then(normalizeGeoJsonCollection)
 }
 
+export function fetchGridDiagnostics(params?: { limit?: number; offset?: number; source_grid?: string }) {
+  const qs = new URLSearchParams()
+
+  if (params?.limit) qs.set('limit', String(params.limit))
+  if (params?.offset) qs.set('offset', String(params.offset))
+  if (params?.source_grid) qs.set('source_grid', params.source_grid)
+
+  const path = `/api/grid/diagnostic-cells${qs.toString() ? `?${qs.toString()}` : ''}`
+  return apiFetch<any>(path).then(normalizeGeoJsonCollection)
+}
+
 export function fetchGridCell(gridId: string) {
   return apiFetch<any>(`/api/grid/cells/${encodeURIComponent(gridId)}`).then(normalizeGeoJsonFeature)
 }
@@ -242,6 +275,21 @@ export function fetchGridIntersections(gridId?: string) {
   return apiFetch<any>(path).then(normalizeGeoJsonCollection)
 }
 
+export function fetchPipelineResults(gridId: string, limit = 100) {
+  const qs = new URLSearchParams()
+  if (gridId) qs.set('grid_id', gridId)
+  if (limit) qs.set('limit', String(limit))
+  const path = `/api/pipeline-results${qs.toString() ? `?${qs.toString()}` : ''}`
+  return apiFetch<any>(path)
+}
+
+export function fetchAllPipelineResults(limit = 10000) {
+  const qs = new URLSearchParams()
+  if (limit) qs.set('limit', String(limit))
+  const path = `/api/pipeline-results${qs.toString() ? `?${qs.toString()}` : ''}`
+  return apiFetch<any>(path)
+}
+
 function normalizeGeoJsonFeature(raw: any): GeoJsonFeature {
   if (!raw) return { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [] } }
   if (raw.type === 'Feature') {
@@ -251,6 +299,16 @@ function normalizeGeoJsonFeature(raw: any): GeoJsonFeature {
       try { f.geometry = JSON.parse(f.properties.geom); delete f.properties.geom } catch {}
     }
     return f as GeoJsonFeature
+  }
+  if (raw.geom) {
+    try {
+      const geom = typeof raw.geom === 'string' ? JSON.parse(raw.geom) : raw.geom
+      const props = { ...raw }
+      delete props.geom
+      return { type: 'Feature', properties: props, geometry: geom }
+    } catch {
+      // fallthrough
+    }
   }
   // if backend returns a row object
   if (raw.st_asgeojson) {
@@ -271,6 +329,7 @@ function normalizeGeoJsonFeature(raw: any): GeoJsonFeature {
 
 function normalizeGeoJsonCollection(raw: any): GeoJsonFeatureCollection {
   if (!raw) return { type: 'FeatureCollection', features: [] }
+  if (Array.isArray(raw.rows)) return normalizeGeoJsonCollection(raw.rows)
   if (raw.type === 'FeatureCollection' && Array.isArray(raw.features)) {
     const features = raw.features.map((f: any) => {
       if (typeof f.geometry === 'string') {
@@ -286,6 +345,15 @@ function normalizeGeoJsonCollection(raw: any): GeoJsonFeatureCollection {
   // If the backend returns an array of rows
   if (Array.isArray(raw)) {
     const features = raw.map((r: any) => {
+      if (r.type === 'Feature') return normalizeGeoJsonFeature(r)
+      if (r.geom) {
+        try {
+          const geom = typeof r.geom === 'string' ? JSON.parse(r.geom) : r.geom
+          const props = { ...r }
+          delete props.geom
+          return { type: 'Feature', properties: props, geometry: geom }
+        } catch {}
+      }
       if (r.st_asgeojson) {
         try { return { type: 'Feature', properties: { ...r, st_asgeojson: undefined }, geometry: JSON.parse(r.st_asgeojson) } } catch {}
       }

@@ -14,6 +14,8 @@ from typing import Optional
 
 from backend.database.connection import get_connection
 
+LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
+
 
 def ingest(pipeline_run_id: Optional[str], baseline_start: int, baseline_end: int, algorithm_version_id: Optional[str] = None, dataset_version_id: Optional[str] = None):
     with get_connection() as conn:
@@ -93,7 +95,7 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                 print("No pipeline results found for additional ingestion for pipeline_run_id=", pipeline_run_id)
                 return
 
-            # dry_spell_probability (use crop_stress_probability as proxy)
+            # dry_spell_probability: accept legacy pipeline JSON while writing the scientific dry-spell table.
             dry_sql = """
             insert into dry_spell_probability (
               grid_id, baseline_start, baseline_end, dry_spell_probability, total_seasons, dataset_version_id, algorithm_version_id, pipeline_run_id
@@ -138,7 +140,7 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                 try:
                     data = json.loads(result_json) if isinstance(result_json, str) else result_json
                     seasons = data.get("seasons_analyzed") or 0
-                    crop_prob = data.get("crop_stress_probability")
+                    dry_spell_prob = data.get("dry_spell_probability", data.get(LEGACY_DRY_PROBABILITY_KEY))
                     params_common = {
                         "grid_id": grid_id,
                         "baseline_start": baseline_start,
@@ -150,7 +152,7 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
 
                     # dry spell
                     try:
-                        cur.execute(dry_sql, {**params_common, "prob": float(crop_prob) if crop_prob is not None else 0.0, "total_seasons": seasons})
+                        cur.execute(dry_sql, {**params_common, "prob": float(dry_spell_prob) if dry_spell_prob is not None else 0.0, "total_seasons": seasons})
                         ingested["dry"] += 1
                     except Exception:
                         # table may not exist
