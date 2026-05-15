@@ -1,9 +1,11 @@
 from pathlib import Path
 import json
+import os
 import sys
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,13 +24,9 @@ except Exception as e:
     print(f"Warning: Supabase routes unavailable: {e}")
     supabase_router = None
 
-# Only mark Supabase as available if the supabase client can be imported.
-try:
-    import importlib
-    importlib.import_module("backend.src.supabase_client")
-    SUPABASE_AVAILABLE = True
-except Exception:
-    SUPABASE_AVAILABLE = False
+# Supabase is optional for the local diagnostic engine. Avoid importing the
+# client at startup because it can block normal map/dashboard reads.
+SUPABASE_AVAILABLE = os.environ.get("ENABLE_SUPABASE_WRITES", "").lower() in {"1", "true", "yes"}
 
 # Try to import database-backed routes, but continue if database isn't available
 try:
@@ -91,7 +89,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-if SUPABASE_AVAILABLE and supabase_router:
+if supabase_router:
     app.include_router(supabase_router)
 
 if grid_router:
@@ -266,7 +264,16 @@ def get_pipeline_results_ta_summary():
 
 @app.get("/api/database/health")
 def api_database_health():
-    return health_check()
+    try:
+        grid_cell_count = len(load_results())
+    except Exception:
+        grid_cell_count = 0
+
+    return {
+        "status": "ok" if grid_cell_count else "offline",
+        "grid_cell_count": grid_cell_count,
+        "source": "local-results" if grid_cell_count else None,
+    }
 
 
 @app.get("/api/locations/hierarchy")
@@ -494,6 +501,11 @@ def load_results():
             detail="No pipeline results found. Run the pipeline first.",
         )
 
+    return _load_results_cached(RESULTS_JSON_PATH.stat().st_mtime_ns)
+
+
+@lru_cache(maxsize=2)
+def _load_results_cached(_results_mtime_ns: int):
     with RESULTS_JSON_PATH.open("r", encoding="utf-8") as results_file:
         return normalize_results(json.load(results_file))
 

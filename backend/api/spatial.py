@@ -34,7 +34,32 @@ def load_geojson_features(path: str):
     with Path(path).open("r", encoding="utf-8") as geojson_file:
         data = json.load(geojson_file)
 
-    return data["features"]
+    features = data["features"]
+    for feature in features:
+        feature["_bbox"] = geometry_bounds(feature["geometry"])
+    return features
+
+
+def geometry_bounds(geometry: dict) -> tuple[float, float, float, float]:
+    coords = geometry["coordinates"]
+    values: list[tuple[float, float]] = []
+
+    def collect(node):
+        if isinstance(node, list) and node and isinstance(node[0], (int, float)):
+            values.append((float(node[0]), float(node[1])))
+            return
+        for child in node:
+            collect(child)
+
+    collect(coords)
+    lons = [lon for lon, _lat in values]
+    lats = [lat for _lon, lat in values]
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def bbox_contains(bbox: tuple[float, float, float, float], lon: float, lat: float) -> bool:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return min_lon <= lon <= max_lon and min_lat <= lat <= max_lat
 
 
 def load_algorithm_results():
@@ -181,7 +206,8 @@ def _build_boundary_summaries_cached(
         matched_cells = [
             result
             for result in results
-            if point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
+            if bbox_contains(feature["_bbox"], result["longitude"], result["latitude"])
+            and point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
         ]
 
         if matched_cells:
@@ -269,7 +295,7 @@ def build_ta_summaries():
         parent_district = None
 
         for district_feature in district_features:
-            if point_in_geometry(lon, lat, district_feature["geometry"]):
+            if bbox_contains(district_feature["_bbox"], lon, lat) and point_in_geometry(lon, lat, district_feature["geometry"]):
                 parent_district = district_feature["properties"]["shapeName"]
                 break
 
@@ -290,7 +316,8 @@ def get_grids_for_ta(ta_name: str, district_name: str = None) -> list:
             matched_cells = [
                 result
                 for result in results
-                if point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
+                if bbox_contains(feature["_bbox"], result["longitude"], result["latitude"])
+                and point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
             ]
             return matched_cells
             

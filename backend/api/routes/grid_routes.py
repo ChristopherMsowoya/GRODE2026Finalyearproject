@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -10,6 +11,8 @@ LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 LEGACY_DRY_INTERPRETATION_KEY = "crop_" + "stress_interpretation"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_RESULTS_PATH = PROJECT_ROOT / "backend" / "algorithms" / "outputs" / "results.json"
+GRID_HALF_SIZE_DEGREES = 0.125
+USE_DATABASE_GRID_API = os.environ.get("GRID_API_SOURCE", "local").lower() in {"db", "database", "postgres", "postgis"}
 
 
 def _row_to_feature(row: dict) -> dict:
@@ -26,6 +29,76 @@ def _feature_collection(rows: list[dict]) -> dict:
         "type": "FeatureCollection",
         "count": len(rows),
         "features": [_row_to_feature(dict(row)) for row in rows],
+    }
+
+
+def _load_local_results() -> list[dict]:
+    if not LOCAL_RESULTS_PATH.exists():
+        return []
+
+    with LOCAL_RESULTS_PATH.open("r", encoding="utf-8") as results_file:
+        rows = json.load(results_file)
+
+    normalized = []
+    for row in rows:
+        result = dict(row)
+        if "dry_spell_probability" not in result:
+            result["dry_spell_probability"] = result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        if "dry_spell_interpretation" not in result:
+            result["dry_spell_interpretation"] = result.get(LEGACY_DRY_INTERPRETATION_KEY)
+        result.pop(LEGACY_DRY_PROBABILITY_KEY, None)
+        result.pop(LEGACY_DRY_INTERPRETATION_KEY, None)
+        normalized.append(result)
+
+    return normalized
+
+
+def _local_result_to_feature(result: dict) -> dict:
+    lon = float(result.get("longitude") or result.get("centroid_lon") or 0)
+    lat = float(result.get("latitude") or result.get("centroid_lat") or 0)
+    grid_id = str(result.get("grid_id", ""))
+    min_lon = lon - GRID_HALF_SIZE_DEGREES
+    max_lon = lon + GRID_HALF_SIZE_DEGREES
+    min_lat = lat - GRID_HALF_SIZE_DEGREES
+    max_lat = lat + GRID_HALF_SIZE_DEGREES
+
+    properties = {
+        **result,
+        "grid_id": grid_id,
+        "grid_code": result.get("grid_code") or grid_id,
+        "centroid_lat": lat,
+        "centroid_lon": lon,
+        "source_grid": result.get("source_grid") or "local-results",
+        "onset_probability": (
+            (result.get("seasons_with_detected_onset") or 0)
+            / max(1, result.get("seasons_analyzed") or 1)
+        ),
+    }
+
+    return {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[
+                [min_lon, min_lat],
+                [max_lon, min_lat],
+                [max_lon, max_lat],
+                [min_lon, max_lat],
+                [min_lon, min_lat],
+            ]],
+        },
+        "properties": properties,
+    }
+
+
+def _local_feature_collection(limit: int = 5000, offset: int = 0) -> dict:
+    rows = _load_local_results()
+    page = rows[offset:offset + limit]
+    return {
+        "type": "FeatureCollection",
+        "count": len(page),
+        "features": [_local_result_to_feature(row) for row in page],
+        "source": "local-results",
     }
 
 
@@ -60,12 +133,7 @@ def _history_from_result(grid_id: str, result: dict) -> dict:
 
 
 def _local_history(grid_id: str) -> dict | None:
-    if not LOCAL_RESULTS_PATH.exists():
-        return None
-
-    with LOCAL_RESULTS_PATH.open("r", encoding="utf-8") as results_file:
-        rows = json.load(results_file)
-
+    rows = _load_local_results()
     match = next((row for row in rows if str(row.get("grid_id")) == str(grid_id)), None)
     if not match:
         return None
@@ -126,6 +194,9 @@ def _diagnostic_select_sql() -> str:
 
 @router.get("/cells")
 def list_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, source_grid: Optional[str] = None):
+    if not USE_DATABASE_GRID_API:
+        return _local_feature_collection(limit, offset)
+
     sql = (
         "select grid_id, grid_code, centroid_lat, centroid_lon, area_km2, source_grid, "
         "st_asgeojson(geom) as geom from grid_cells"
@@ -138,12 +209,18 @@ def list_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, s
     sql += " order by grid_id limit %(limit)s offset %(offset)s"
     params.update({"limit": limit, "offset": offset})
 
-    rows = fetch_all(sql, params)
-    return _feature_collection(rows)
+    try:
+        rows = fetch_all(sql, params)
+        return _feature_collection(rows)
+    except Exception:
+        return _local_feature_collection(limit, offset)
 
 
 @router.get("/diagnostic-cells")
 def list_diagnostic_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, source_grid: Optional[str] = None):
+    if not USE_DATABASE_GRID_API:
+        return _local_feature_collection(limit, offset)
+
     sql = _diagnostic_select_sql()
     params = {
         "legacy_dry_probability_key": LEGACY_DRY_PROBABILITY_KEY,
@@ -161,25 +238,68 @@ def list_diagnostic_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset:
     sql += " order by gc.grid_id limit %(limit)s offset %(offset)s"
     params.update({"limit": limit, "offset": offset})
 
-    rows = fetch_all(sql, params)
-    return _feature_collection(rows)
+    try:
+        rows = fetch_all(sql, params)
+        return _feature_collection(rows)
+    except Exception:
+        return _local_feature_collection(limit, offset)
 
 
 @router.get("/cells/{grid_id}")
 def get_grid_cell(grid_id: str):
-    sql = _diagnostic_select_sql() + " where gc.grid_id = %(grid_id)s"
-    row = fetch_one(sql, {
-        "grid_id": grid_id,
-        "legacy_dry_probability_key": LEGACY_DRY_PROBABILITY_KEY,
-        "legacy_dry_interpretation_key": LEGACY_DRY_INTERPRETATION_KEY,
-    })
-    if not row:
+    if not USE_DATABASE_GRID_API:
+        local = next((row for row in _load_local_results() if str(row.get("grid_id")) == str(grid_id)), None)
+        if local:
+            return _local_result_to_feature(local)
         raise HTTPException(status_code=404, detail="Grid cell not found")
-    return _row_to_feature(row)
+
+    sql = _diagnostic_select_sql() + " where gc.grid_id = %(grid_id)s"
+    try:
+        row = fetch_one(sql, {
+            "grid_id": grid_id,
+            "legacy_dry_probability_key": LEGACY_DRY_PROBABILITY_KEY,
+            "legacy_dry_interpretation_key": LEGACY_DRY_INTERPRETATION_KEY,
+        })
+        if row:
+            return _row_to_feature(row)
+    except Exception:
+        pass
+
+    local = next((row for row in _load_local_results() if str(row.get("grid_id")) == str(grid_id)), None)
+    if local:
+        return _local_result_to_feature(local)
+
+    raise HTTPException(status_code=404, detail="Grid cell not found")
+
+
+@router.get("/ta-counts")
+def get_ta_grid_counts():
+    from backend.api.spatial import build_ta_summaries
+
+    summaries = build_ta_summaries()
+    rows = [
+        {
+            "traditional_authority": row["traditional_authority"],
+            "district": row.get("district"),
+            "grid_cell_count": row["grid_cell_count"],
+        }
+        for row in summaries
+    ]
+
+    return {
+        "traditional_authority_count": len(rows),
+        "traditional_authorities": rows,
+    }
 
 
 @router.get("/cells/{grid_id}/history")
 def get_grid_cell_history(grid_id: str):
+    if not USE_DATABASE_GRID_API:
+        local = _local_history(grid_id)
+        if local:
+            return local
+        return {"grid_id": grid_id, "season_count": 0, "seasons": []}
+
     try:
         row = fetch_one(
             """
@@ -209,6 +329,9 @@ def get_grid_cell_history(grid_id: str):
 
 @router.get("/intersections")
 def list_intersections(limit: int = Query(500, ge=1, le=5000), offset: int = 0, grid_id: Optional[str] = None, admin_boundary_id: Optional[str] = None):
+    if not USE_DATABASE_GRID_API:
+        return {"count": 0, "rows": [], "source": "local-results"}
+
     sql = (
         "select grid_id, admin_boundary_id, overlap_area_km2, overlap_fraction "
         "from grid_admin_intersections"
@@ -228,5 +351,8 @@ def list_intersections(limit: int = Query(500, ge=1, le=5000), offset: int = 0, 
     sql += " order by grid_id limit %(limit)s offset %(offset)s"
     params.update({"limit": limit, "offset": offset})
 
-    rows = fetch_all(sql, params)
-    return {"count": len(rows), "rows": rows}
+    try:
+        rows = fetch_all(sql, params)
+        return {"count": len(rows), "rows": rows}
+    except Exception:
+        return {"count": 0, "rows": [], "source": "local-results"}

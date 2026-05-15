@@ -35,10 +35,12 @@ def get_connection():
 
     url = get_database_url()
 
-    # Try a normal connect first with a 30-second timeout.
-    # (No timeout causes psycopg to hang indefinitely on slow pooler connections.)
+    # Try a normal connect first with a short timeout. Browser requests in the
+    # frontend time out quickly, so database-backed endpoints must fail fast
+    # enough to use local pipeline-output fallbacks.
+    connect_timeout = int(os.environ.get("DATABASE_CONNECT_TIMEOUT", "5"))
     try:
-        conn = psycopg.connect(url, connect_timeout=30)
+        conn = psycopg.connect(url, connect_timeout=connect_timeout)
     except Exception as exc:
         err = exc
     else:
@@ -56,7 +58,7 @@ def get_connection():
                                _parsed.path, _parsed.params, _parsed.query, ""))
             # rebuild with correct netloc including username/password
             session_url = url.replace(':6543/', ':5432/')
-            conn2 = psycopg.connect(session_url, connect_timeout=30)
+            conn2 = psycopg.connect(session_url, connect_timeout=connect_timeout)
             with conn2 as connection:
                 yield connection
                 return
@@ -95,7 +97,7 @@ def get_connection():
             if sslmode:
                 conn_params['sslmode'] = sslmode
 
-            conn2 = psycopg.connect(**conn_params, connect_timeout=30)
+            conn2 = psycopg.connect(**conn_params, connect_timeout=connect_timeout)
             with conn2 as connection:
                 yield connection
                 return
