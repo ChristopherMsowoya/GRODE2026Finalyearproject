@@ -1,8 +1,9 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { MapPin, ChevronDown, Search, Loader2, AlertCircle } from "lucide-react"
 import malawiAdminData from "@/lib/data/malawiAdministrativeData.json"
+import { fetchLocationHierarchy, fetchTaGrids, searchLocations } from "@/lib/algorithm-api"
 
 interface TaOption {
   ta: string
@@ -48,8 +49,6 @@ interface LocationSelectorProps {
   defaultDistrict?: string
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000"
-
 const RISK_COLORS = {
   Low: { text: "#1F7A63", bg: "rgba(31,122,99,0.12)", border: "rgba(31,122,99,0.3)" },
   Medium: { text: "#F4A261", bg: "rgba(244,162,97,0.12)", border: "rgba(244,162,97,0.3)" },
@@ -73,24 +72,47 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
   const [taSearch, setTaSearch] = useState("")
   const [areaSearch, setAreaSearch] = useState("")
   
+  const [globalSearch, setGlobalSearch] = useState("")
+  const [globalResults, setGlobalResults] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchGridSelection, setSearchGridSelection] = useState<SelectedLocation | null>(null)
+
   const [gridsLoading, setGridsLoading] = useState(false)
   const [taGrids, setTaGrids] = useState<GridOption[]>([])
+  
+  // Debounce timer ref for search
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const lastEmittedSelectionRef = useRef<string>("")
 
   // Load hierarchy on mount
   useEffect(() => {
+    const controller = new AbortController()
+
     const fetchHierarchy = async () => {
+      setLoading(true)
+      setError(null)
       try {
-        const res = await fetch(`${API_BASE}/api/locations/hierarchy`)
-        if (!res.ok) throw new Error("Failed to load location data")
-        const data = await res.json()
+        const data = await fetchLocationHierarchy(controller.signal)
+        if (controller.signal.aborted) return
         setHierarchy(data.districts || [])
+        if ((data.districts || []).length === 0) {
+          setError("Location data is temporarily unavailable. Filters will recover when the backend is online.")
+        }
       } catch (e) {
-        setError("Could not load location data")
+        if (!controller.signal.aborted) {
+          console.warn("Hierarchy fetch warning:", e)
+          setHierarchy([])
+          setError("Location data is temporarily unavailable. Filters will recover when the backend is online.")
+        }
       } finally {
-        setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       }
     }
     fetchHierarchy()
+
+    return () => controller.abort()
   }, [])
 
   // Load grids when TA is selected
@@ -100,87 +122,258 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       setSelectedArea("")
       return
     }
+
+    const controller = new AbortController()
+
     const fetchGrids = async () => {
       setGridsLoading(true)
       try {
-        const res = await fetch(`${API_BASE}/api/locations/ta-grids?district=${encodeURIComponent(selectedDistrict)}&ta=${encodeURIComponent(selectedTA)}`)
-        if (res.ok) {
-          const data = await res.json()
-          setTaGrids(data.grids || [])
-        } else {
+        const data = await fetchTaGrids(selectedDistrict, selectedTA, controller.signal)
+        if (controller.signal.aborted) return
+        setTaGrids((data.grids || []) as unknown as GridOption[])
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          console.warn("Grid fetch warning:", e)
           setTaGrids([])
         }
-      } catch (e) {
-        setTaGrids([])
       } finally {
-        setGridsLoading(false)
+        if (!controller.signal.aborted) setGridsLoading(false)
       }
     }
     fetchGrids()
+
+    return () => controller.abort()
   }, [selectedTA, selectedDistrict])
 
-  const currentDistrict = hierarchy.find(d => d.district === selectedDistrict)
-  const currentTas = currentDistrict?.traditional_authorities || []
-  const currentTaData = currentTas.find(t => t.ta === selectedTA) || null
+  // Memoize derived values to prevent circular dependencies
+  const currentDistrict = useMemo(
+    () => hierarchy.find(d => d.district === selectedDistrict),
+    [hierarchy, selectedDistrict]
+  )
+  
+  const currentTas = useMemo(
+    () => currentDistrict?.traditional_authorities || [],
+    [currentDistrict]
+  )
+  
+  const currentTaData = useMemo(
+    () => currentTas.find(t => t.ta === selectedTA) || null,
+    [currentTas, selectedTA]
+  )
 
   // Map area names from json
-  const currentDistrictAdmin = malawiAdminData.districts.find(d => d.name.toLowerCase() === selectedDistrict.toLowerCase())
-  const currentTaAdmin = currentDistrictAdmin?.traditionalAuthorities.find(t => t.name.toLowerCase().includes(selectedTA.toLowerCase()))
-  const adminAreas = currentTaAdmin?.areas || []
-
-  // Combine grids with area names
-  const gridAreaOptions = taGrids.map((grid, index) => {
-    const areaName = adminAreas[index] ? adminAreas[index].name : `Local Area ${index + 1}`
-    return {
-      ...grid,
-      areaName
-    }
-  })
-
-  const filteredDistricts = hierarchy.filter(d =>
-    d.district.toLowerCase().includes(districtSearch.toLowerCase())
+  const currentDistrictAdmin = useMemo(
+    () => malawiAdminData.districts.find(d => d.name.toLowerCase() === selectedDistrict.toLowerCase()),
+    [selectedDistrict]
   )
-  const filteredTas = currentTas.filter(t =>
-    t.ta.toLowerCase().includes(taSearch.toLowerCase())
+  
+  const currentTaAdmin = useMemo(
+    () => currentDistrictAdmin?.traditionalAuthorities.find(t => t.name.toLowerCase().includes(selectedTA.toLowerCase())),
+    [currentDistrictAdmin, selectedTA]
   )
-  const filteredAreas = gridAreaOptions.filter(g => 
-    g.areaName.toLowerCase().includes(areaSearch.toLowerCase()) || g.grid_id.toLowerCase().includes(areaSearch.toLowerCase())
+  
+  const adminAreas = useMemo(
+    () => currentTaAdmin?.areas || [],
+    [currentTaAdmin]
   )
 
-  const currentGridData = gridAreaOptions.find(g => g.areaName === selectedArea) || null
+  // Combine grids with area names - memoized to prevent circular effects
+  const gridAreaOptions = useMemo(
+    () => taGrids.map((grid, index) => {
+      const areaName = adminAreas[index] ? adminAreas[index].name : `Local Area ${index + 1}`
+      return { ...grid, areaName }
+    }),
+    [taGrids, adminAreas]
+  )
 
-  // Notify parent when selection changes
+  const filteredDistricts = useMemo(
+    () => hierarchy.filter(d => d.district.toLowerCase().includes(districtSearch.toLowerCase())),
+    [hierarchy, districtSearch]
+  )
+  
+  const filteredTas = useMemo(
+    () => currentTas.filter(t => t.ta.toLowerCase().includes(taSearch.toLowerCase())),
+    [currentTas, taSearch]
+  )
+  
+  const filteredAreas = useMemo(
+    () => gridAreaOptions.filter(g => 
+      g.areaName.toLowerCase().includes(areaSearch.toLowerCase()) || 
+      g.grid_id.toLowerCase().includes(areaSearch.toLowerCase())
+    ),
+    [gridAreaOptions, areaSearch]
+  )
+
+  const currentGridData = useMemo(
+    () => gridAreaOptions.find(g => g.areaName === selectedArea) || null,
+    [gridAreaOptions, selectedArea]
+  )
+
+  const selectionKey = useCallback((location: SelectedLocation) => {
+    return [
+      location.district,
+      location.ta || "",
+      location.grid || "",
+      location.areaName || "",
+      location.taData?.grid_cell_count ?? "",
+      location.gridData?.latitude ?? "",
+      location.gridData?.longitude ?? "",
+      location.gridData?.false_onset_probability ?? "",
+      location.gridData?.dry_spell_probability ?? "",
+      location.gridData?.onset_probability ?? "",
+    ].join("|")
+  }, [])
+
+  // Notify parent when selection changes - duplicate guards prevent recursive update loops.
   useEffect(() => {
-    onLocationChange({
+    const payload: SelectedLocation = searchGridSelection &&
+      selectedDistrict === searchGridSelection.district &&
+      selectedTA === "" &&
+      selectedArea === ""
+      ? searchGridSelection
+      : {
       district: selectedDistrict,
       ta: selectedTA || null,
       taData: currentTaData,
       grid: currentGridData ? currentGridData.grid_id : null,
-      gridData: currentGridData ? currentGridData : null,
+      gridData: currentGridData || null,
       areaName: selectedArea || null,
-    })
-  }, [selectedDistrict, selectedTA, currentTaData, selectedArea, currentGridData])
+    }
 
-  const handleDistrictSelect = (district: string) => {
+    const key = selectionKey(payload)
+    if (lastEmittedSelectionRef.current === key) return
+    lastEmittedSelectionRef.current = key
+    onLocationChange(payload)
+  }, [
+    selectedDistrict,
+    selectedTA,
+    selectedArea,
+    currentTaData,
+    currentGridData,
+    searchGridSelection,
+    onLocationChange,
+    selectionKey,
+  ])
+
+  // Memoized event handlers
+  const handleDistrictSelect = useCallback((district: string) => {
+    setSearchGridSelection(null)
     setSelectedDistrict(district)
     setSelectedTA("")
     setSelectedArea("")
     setDistrictOpen(false)
     setDistrictSearch("")
-  }
+  }, [])
 
-  const handleTaSelect = (ta: string) => {
+  const handleTaSelect = useCallback((ta: string) => {
+    setSearchGridSelection(null)
     setSelectedTA(ta)
     setSelectedArea("")
     setTaOpen(false)
     setTaSearch("")
-  }
+  }, [])
 
-  const handleAreaSelect = (areaName: string) => {
+  const handleAreaSelect = useCallback((areaName: string) => {
+    setSearchGridSelection(null)
     setSelectedArea(areaName)
     setAreaOpen(false)
     setAreaSearch("")
-  }
+  }, [])
+
+  // Debounced global search with abort control
+  const handleGlobalSearch = useCallback(async (query: string) => {
+    setGlobalSearch(query)
+    
+    // Cancel previous request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    
+    // Clear previous timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current)
+    }
+
+    if (query.trim().length < 2) {
+      setGlobalResults([])
+      setSearchOpen(false)
+      return
+    }
+
+    setSearchOpen(true)
+    
+    // Debounce the search request
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true)
+      abortControllerRef.current = new AbortController()
+      
+      try {
+        const data = await searchLocations(query, 8, abortControllerRef.current.signal)
+        setGlobalResults(data.locations || [])
+      } catch (e) {
+        if (e instanceof Error && e.name !== "AbortError") {
+          console.warn("Search warning:", e)
+        }
+      } finally {
+        setIsSearching(false)
+      }
+    }, 400) // 400ms debounce
+  }, [])
+
+  const handleGlobalSelect = useCallback((place: any) => {
+    setGlobalSearch("")
+    setSearchOpen(false)
+    setGlobalResults([])
+    
+    if (place.place_type === "Grid Cell") {
+      const gridSelection: SelectedLocation = {
+        district: place.district || selectedDistrict,
+        ta: place.traditional_authority || null,
+        taData: null,
+        grid: place.grid_id,
+        gridData: {
+          grid_id: place.grid_id,
+          latitude: place.latitude,
+          longitude: place.longitude,
+          overall_risk_level: "Low",
+          false_onset_probability: 0,
+          dry_spell_probability: 0,
+          seasons_analyzed: 0,
+          seasons_with_detected_onset: 0,
+          first_detected_onset_date: null,
+          latest_detected_onset_date: null,
+          false_onset_interpretation: "",
+          dry_spell_interpretation: "",
+        },
+        areaName: place.location_name
+      }
+      setSearchGridSelection(gridSelection)
+      setSelectedDistrict(place.district || selectedDistrict)
+      setSelectedTA("")
+      setSelectedArea("")
+    } else {
+      setSearchGridSelection(null)
+      setSelectedDistrict(place.district)
+      if (place.traditional_authority) {
+        setSelectedTA(place.traditional_authority)
+      } else {
+        setSelectedTA("")
+      }
+      setSelectedArea("")
+    }
+  }, [selectedDistrict, onLocationChange])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current)
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
 
   if (loading) {
     return (
@@ -207,13 +400,47 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
 
   return (
     <div className="flex flex-wrap items-center gap-3">
+      {/* Global Search */}
+      <div className="relative">
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2 transition-all w-64"
+             style={{ background: "white", border: "1.5px solid #e2e8f0", boxShadow: searchOpen ? "0 0 0 3px rgba(15,42,61,0.08)" : "none" }}>
+          <Search className="h-4 w-4 text-[#6b7a8d]" />
+          <input
+            value={globalSearch}
+            onChange={(e) => handleGlobalSearch(e.target.value)}
+            onFocus={() => { if (globalResults.length > 0) setSearchOpen(true) }}
+            onBlur={() => setTimeout(() => setSearchOpen(false), 200)}
+            placeholder="Search District, TA, Grid..."
+            className="w-full bg-transparent text-[13px] outline-none text-[#0F2A3D] placeholder-[#b0bac7]"
+          />
+          {isSearching && <Loader2 className="h-4 w-4 animate-spin text-[#6b7a8d]" />}
+        </div>
+        {searchOpen && globalResults.length > 0 && (
+          <div className="absolute top-full left-0 z-50 mt-1.5 w-72 max-h-60 overflow-y-auto rounded-2xl bg-white"
+               style={{ boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}>
+            <div className="p-2 flex flex-col">
+              {globalResults.map((r, idx) => (
+                <button
+                  key={`${r.grid_id || r.location_name}-${r.district}-${r.place_type}-${idx}`}
+                  onMouseDown={() => handleGlobalSelect(r)}
+                  className="flex flex-col items-start px-3 py-2 rounded-xl hover:bg-[#f8fafc] text-left transition-colors"
+                >
+                  <span className="text-[13px] font-bold text-[#0F2A3D]">{r.location_name}</span>
+                  <span className="text-[11px] text-[#6b7a8d] font-medium">{r.district} • {r.place_type}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="h-6 w-px bg-[#e2e8f0] hidden sm:block"></div>
+
       {/* Location pin label */}
       <div className="flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-widest text-[#6b7a8d]">
         <MapPin className="h-3.5 w-3.5" />
-        Location
+        Filter:
       </div>
-
-      {/* District Dropdown */}
       <div className="relative">
         <button
           id="district-selector"
@@ -316,11 +543,11 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                 <span>All TAs in {selectedDistrict}</span>
               </button>
               <div className="mx-3 my-1 border-t border-[#f0f4f8]" />
-              {filteredTas.map(t => {
+              {filteredTas.map((t, idx) => {
                 const rc = RISK_COLORS[t.overall_risk_level]
                 return (
                   <button
-                    key={t.ta}
+                    key={`${selectedDistrict}-${t.ta}-${idx}`}
                     onClick={() => handleTaSelect(t.ta)}
                     className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] text-left transition-colors hover:bg-[#f8fafc]"
                     style={{ color: t.ta === selectedTA ? "#1F7A63" : "#0F2A3D", fontWeight: t.ta === selectedTA ? 700 : 500 }}

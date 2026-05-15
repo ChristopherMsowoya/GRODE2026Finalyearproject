@@ -18,7 +18,8 @@ load_dotenv(PROJECT_ROOT / "backend" / ".env")
 
 try:
     from backend.api.routes.supabase_routes import router as supabase_router
-except Exception:
+except Exception as e:
+    print(f"Warning: Supabase routes unavailable: {e}")
     supabase_router = None
 
 # Only mark Supabase as available if the supabase client can be imported.
@@ -29,9 +30,24 @@ try:
 except Exception:
     SUPABASE_AVAILABLE = False
 
-from backend.api.routes.grid_routes import router as grid_router
-from backend.api.routes.ingest_routes import router as ingest_router
-from backend.api.routes.analytics_routes import router as analytics_router
+# Try to import database-backed routes, but continue if database isn't available
+try:
+    from backend.api.routes.grid_routes import router as grid_router
+except Exception as e:
+    print(f"Warning: Grid routes unavailable: {e}")
+    grid_router = None
+
+try:
+    from backend.api.routes.ingest_routes import router as ingest_router
+except Exception as e:
+    print(f"Warning: Ingest routes unavailable: {e}")
+    ingest_router = None
+
+try:
+    from backend.api.routes.analytics_routes import router as analytics_router
+except Exception as e:
+    print(f"Warning: Analytics routes unavailable: {e}")
+    analytics_router = None
 
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
@@ -68,7 +84,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:5173",
-        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5173", "http://localhost:4000", "http://127.0.0.1:4000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -78,9 +94,14 @@ app.add_middleware(
 if SUPABASE_AVAILABLE and supabase_router:
     app.include_router(supabase_router)
 
-app.include_router(grid_router)
-app.include_router(ingest_router)
-app.include_router(analytics_router)
+if grid_router:
+    app.include_router(grid_router)
+
+if ingest_router:
+    app.include_router(ingest_router)
+
+if analytics_router:
+    app.include_router(analytics_router)
 
 
 @app.get("/")
@@ -200,6 +221,34 @@ def get_pipeline_results(grid_id: str | None = Query(default=None), limit: int =
     return {"count": len(results[:limit]), "data": results[:limit]}
 
 
+@app.get("/api/grid/cells/{grid_id}/history")
+def get_grid_history(grid_id: str):
+    results = normalize_results(load_results())
+    result = next((row for row in results if str(row.get("grid_id")) == str(grid_id)), None)
+    if not result:
+        return {"grid_id": grid_id, "season_count": 0, "seasons": []}
+
+    diagnostics = result.get("season_diagnostics") or []
+    if not diagnostics:
+        seasons = int(result.get("seasons_analyzed") or 1)
+        diagnostics = [
+            {
+                "season": f"S{index + 1}",
+                "season_year": None,
+                "onset_probability": result.get("onset_probability")
+                or (
+                    (result.get("seasons_with_detected_onset") or 0)
+                    / max(1, result.get("seasons_analyzed") or 1)
+                ),
+                "false_onset_probability": result.get("false_onset_probability", 0),
+                "dry_spell_probability": dry_spell_probability(result),
+            }
+            for index in range(seasons)
+        ]
+
+    return {"grid_id": grid_id, "season_count": len(diagnostics), "seasons": diagnostics}
+
+
 @app.get("/api/pipeline-results/summary")
 def get_pipeline_results_summary():
     return get_results_summary()
@@ -249,6 +298,87 @@ def get_location_hierarchy():
     )
 
     return {"district_count": len(hierarchy), "districts": hierarchy}
+
+
+@app.get("/api/locations/search")
+def search_locations(name: str = Query(...), limit: int = Query(default=10)):
+    name_lower = name.lower()
+    results = []
+
+    # Search districts
+    district_summaries = build_district_summaries()
+    for d in district_summaries:
+        if name_lower in d["district"].lower():
+            results.append({
+                "location_name": d["district"],
+                "district": d["district"],
+                "traditional_authority": None,
+                "grid_id": None,
+                "longitude": 0.0,
+                "latitude": 0.0,
+                "place_type": "District",
+                "population": None,
+            })
+
+    # Search TAs
+    ta_summaries = build_ta_summaries()
+    for ta in ta_summaries:
+        ta_name = ta.get("traditional_authority", "")
+        if name_lower in ta_name.lower():
+            results.append({
+                "location_name": f"{ta_name} (TA)",
+                "district": ta.get("district"),
+                "traditional_authority": ta_name,
+                "grid_id": None,
+                "longitude": 0.0,
+                "latitude": 0.0,
+                "place_type": "Traditional Authority",
+                "population": None,
+            })
+
+    # Search grids
+    # Try to find grids where grid_id == name or grid_code contains name
+    try:
+        all_grids = load_results()
+        for g in all_grids:
+            grid_id_str = str(g.get("grid_id", ""))
+            grid_code_str = str(g.get("grid_code", ""))
+            if name_lower in grid_id_str.lower() or name_lower in grid_code_str.lower():
+                results.append({
+                    "location_name": f"Grid {grid_id_str}",
+                    "district": g.get("district_name") or g.get("district"),
+                    "traditional_authority": None,
+                    "grid_id": grid_id_str,
+                    "longitude": float(g.get("centroid_lon", g.get("longitude", 0.0))),
+                    "latitude": float(g.get("centroid_lat", g.get("latitude", 0.0))),
+                    "place_type": "Grid Cell",
+                    "population": None,
+                })
+                if len(results) > limit * 3:
+                    break
+    except Exception:
+        pass
+
+    # Sort results to have exact matches first, then by name
+    results.sort(key=lambda x: (
+        0 if x["location_name"].lower().startswith(name_lower) else 1,
+        x["location_name"]
+    ))
+
+    # Remove duplicates
+    seen = set()
+    unique_results = []
+    for r in results:
+        key = (r["location_name"], r["district"], r["grid_id"])
+        if key not in seen:
+            seen.add(key)
+            unique_results.append(r)
+
+    return {
+        "query": name,
+        "match_count": len(unique_results[:limit]),
+        "locations": unique_results[:limit]
+    }
 
 
 @app.get("/api/locations/ta-results")

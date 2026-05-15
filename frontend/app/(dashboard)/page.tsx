@@ -188,7 +188,7 @@ export default function DashboardPage() {
       try {
         const res = await fetchDistrictSummary()
         if (cancelled) return
-        if ((res as any).pipeline_status === "not_run") {
+        if ((res as any).pipeline_status === "not_run" || res.districts.length === 0) {
           setLiveStatus("error")
           return
         }
@@ -203,7 +203,18 @@ export default function DashboardPage() {
   }, [])
 
   const handleLocationChange = useCallback((loc: SelectedLocation) => {
-    setSelectedLocation(loc)
+    setSelectedLocation((prev) => {
+      if (
+        prev?.district === loc.district &&
+        prev?.ta === loc.ta &&
+        prev?.grid === loc.grid &&
+        prev?.areaName === loc.areaName
+      ) {
+        return prev
+      }
+
+      return loc
+    })
   }, [])
 
   const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"

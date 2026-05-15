@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useUser } from "@/lib/user-context"
 import { getDistrictData } from "@/lib/district-data"
 import { CalendarDays, BarChart2, AlertCircle, ChevronDown, X, Wifi } from "lucide-react"
@@ -9,6 +9,9 @@ import type { DistrictEnvironmentalData } from "@/lib/district-data"
 import type { DistrictSummary } from "@/lib/algorithm-api"
 import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 import GridGraph from "@/components/grid-graph"
+import dynamic from "next/dynamic"
+
+const OnsetMap = dynamic(() => import("./onset-map"), { ssr: false })
 
 // ─── Timeline marker data ────────────────────────────────────────────────────
 function getMarkers(data: DistrictEnvironmentalData, liveData?: { first_detected_onset_date?: string | null, latest_detected_onset_date?: string | null } | null) {
@@ -156,7 +159,7 @@ export default function OnsetInfoPage() {
         const { fetchDistrictSummary } = await import("@/lib/algorithm-api")
         const res = await fetchDistrictSummary()
         if (cancelled) return
-        if ((res as any).pipeline_status === "not_run") {
+        if ((res as any).pipeline_status === "not_run" || res.districts.length === 0) {
           setLiveStatus("error")
           return
         }
@@ -180,20 +183,33 @@ export default function OnsetInfoPage() {
     setDistrictData(data)
   }, [selectedLocation, defaultDistrict])
 
-  const handleLocationChange = (loc: SelectedLocation) => {
-    setSelectedLocation(loc)
-  }
+  const handleLocationChange = useCallback((loc: SelectedLocation) => {
+    setSelectedLocation((prev) => {
+      if (
+        prev?.district === loc.district &&
+        prev?.ta === loc.ta &&
+        prev?.grid === loc.grid &&
+        prev?.areaName === loc.areaName
+      ) {
+        return prev
+      }
+
+      return loc
+    })
+  }, [])
 
   const activeDistrict = selectedLocation?.district || defaultDistrict
+  const liveSelectedDistrict = liveDistrictData.find(d => d.district === activeDistrict)
+  const activeLiveData = selectedLocation?.gridData || liveSelectedDistrict
 
   if (!districtData) {
     return (
       <div className="space-y-6">
         <div>
           <h1 className="text-[36px] font-extrabold tracking-tight leading-tight" style={{ color: "#0F2A3D" }}>
-            Rainfall Onset Forecast
+            Rainfall Onset Detection
           </h1>
-          <p className="text-[14px] text-[#6b7a8d] mt-1">Select a grid cell to view rainfall onset diagnostics.</p>
+          <p className="text-[14px] text-[#6b7a8d] mt-1">Select a location to view rainfall onset diagnostics.</p>
         </div>
 
         <div className="rounded-2xl bg-white p-8 text-center border border-[#e2e8f0]">
@@ -205,10 +221,6 @@ export default function OnsetInfoPage() {
     )
   }
 
-
-
-  const liveSelectedDistrict = liveDistrictData.find(d => d.district === activeDistrict)
-  const activeLiveData = selectedLocation?.gridData || liveSelectedDistrict
   const markers = getMarkers(districtData, activeLiveData)
   const optimalStart = markers[0].date
   const optimalEnd = markers[2].date
@@ -224,7 +236,7 @@ export default function OnsetInfoPage() {
               className="text-[36px] font-extrabold tracking-tight leading-tight"
               style={{ color: "#0F2A3D" }}
             >
-              Rainfall Onset Forecast
+              Rainfall Onset Detection
             </h1>
             {liveStatus === "live" && liveSelectedDistrict && (
               <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1 rounded-full">
@@ -232,60 +244,104 @@ export default function OnsetInfoPage() {
               </span>
             )}
           </div>
-            <p className="text-[14px] text-[#6b7a8d] mt-1">
-              for {selectedLocation?.ta ? `TA ${selectedLocation.ta}` : activeDistrict}
-            </p>
+          <p className="text-[14px] text-[#6b7a8d] mt-1">
+            for {selectedLocation?.ta ? `TA ${selectedLocation.ta}` : activeDistrict}
+          </p>
+        </div>
+      </div>
+
+      {/* ── Location Selector ───────────────────────────────────────────── */}
+      <div className="rounded-2xl p-4 mb-6 border border-[#e2e8f0] bg-white">
+        <LocationSelector
+          onLocationChange={handleLocationChange}
+          defaultDistrict={defaultDistrict}
+        />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1fr_400px]">
+        {/* Left Panel: Map */}
+        <div className="flex flex-col gap-5">
+          <div className="rounded-[20px] bg-white p-0 shadow-sm border border-[#e9edf1] overflow-hidden" style={{ minHeight: "500px" }}>
+            <OnsetMap
+              selectedLocation={selectedLocation}
+              onLocationChange={handleLocationChange}
+              userDistrict={user?.district || null}
+              onDistrictDataLoad={() => {}}
+            />
           </div>
+
+          {/* ── Grid Graph Visualization ────────────────────────────────────── */}
+          {selectedLocation && selectedLocation.grid && (
+            <GridGraph location={selectedLocation} metricType="onset" />
+          )}
         </div>
 
-        {/* ── Location Selector ───────────────────────────────────────────── */}
-        <div className="rounded-2xl p-4 mb-6 border border-[#e2e8f0] bg-white">
-          <LocationSelector
-            onLocationChange={handleLocationChange}
-            defaultDistrict={defaultDistrict}
-          />
-        </div>
-
-        {/* ── Grid Graph Visualization ────────────────────────────────────── */}
-        {selectedLocation && selectedLocation.grid && (
-          <GridGraph location={selectedLocation} metricType="onset" />
-        )}
-
-
-
-      {/* ── Seasonal Timeline card ────────────────────────────────────────── */}
-      <div
-        className="rounded-2xl bg-white px-7 pt-6 pb-2"
-        style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px #e2e8f0" }}
-      >
-        {/* Header row */}
-        <div className="flex items-start justify-between mb-2">
-          <div>
-            <h2 className="text-[20px] font-bold" style={{ color: "#0F2A3D" }}>
-              Seasonal Timeline
-            </h2>
-            <p className="text-[13px] mt-0.5" style={{ color: "#6b7a8d" }}>
-              {districtData.location.region} {districtData.location.zone}
-            </p>
+        {/* Right Panel: Live Stats & Timeline */}
+        <div className="flex flex-col gap-5">
+          <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1]">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-[14px] font-bold text-[#0F2A3D]">Live Grid Statistics</h3>
+              {liveStatus === "live" && (
+                <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] px-3 py-1 rounded-full">
+                  <Wifi className="h-3 w-3" /> Live Data
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-4">
+              <div className="rounded-[14px] bg-[#fdf8f2] p-4 border border-[#f1e6d0]">
+                <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Onset Prob.</p>
+                <p className="text-[24px] font-bold text-[#0F2A3D]">
+                  {selectedLocation?.gridData 
+                    ? ((selectedLocation.gridData.onset_probability ?? 0) * 100).toFixed(1) 
+                    : selectedLocation?.taData 
+                      ? ((selectedLocation.taData as any).onset_detection_rate ?? 0 * 100).toFixed(1) 
+                      : liveSelectedDistrict ? ((liveSelectedDistrict as any).onset_detection_rate ?? 0 * 100).toFixed(1) : 0}%
+                </p>
+              </div>
+              <div className="rounded-[14px] bg-[#f0fdf4] p-4 border border-[#bbf7d0]">
+                <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Seasons Analysed</p>
+                <p className="text-[24px] font-bold text-[#0F2A3D]">
+                  {selectedLocation?.gridData ? selectedLocation.gridData.seasons_analyzed : liveSelectedDistrict?.seasons_analyzed || 0}
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="text-right">
-            <span
-              className="text-[10px] font-bold uppercase tracking-widest block"
-              style={{ color: "#1F7A63" }}
-            >
-              Optimal Window
-            </span>
-            <span
-              className="text-[18px] font-extrabold block mt-0.5"
-              style={{ color: "#0F2A3D" }}
-            >
-              {optimalStart} — {optimalEnd}
-            </span>
+
+          {/* ── Seasonal Timeline card ────────────────────────────────────────── */}
+          <div
+            className="rounded-2xl bg-white px-7 pt-6 pb-2"
+            style={{ boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px #e2e8f0" }}
+          >
+            {/* Header row */}
+            <div className="flex items-start justify-between mb-2">
+              <div>
+                <h2 className="text-[20px] font-bold" style={{ color: "#0F2A3D" }}>
+                  Seasonal Timeline
+                </h2>
+                <p className="text-[13px] mt-0.5" style={{ color: "#6b7a8d" }}>
+                  {districtData.location.region} {districtData.location.zone}
+                </p>
+              </div>
+              <div className="text-right">
+                <span
+                  className="text-[10px] font-bold uppercase tracking-widest block"
+                  style={{ color: "#1F7A63" }}
+                >
+                  Optimal Window
+                </span>
+                <span
+                  className="text-[18px] font-extrabold block mt-0.5"
+                  style={{ color: "#0F2A3D" }}
+                >
+                  {optimalStart} — {optimalEnd}
+                </span>
+              </div>
+            </div>
+
+            {/* Animated timeline */}
+            <TimelineBar markers={markers} />
           </div>
         </div>
-
-        {/* Animated timeline */}
-        <TimelineBar markers={markers} />
       </div>
 
       {/* ── Info cards (3-col) ───────────────────────────────────────────── */}
@@ -346,4 +402,3 @@ export default function OnsetInfoPage() {
     </div>
   )
 }
-

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { Suspense, useState, useEffect } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { useSearchParams } from "next/navigation"
@@ -60,7 +60,7 @@ function MetricCard({ label, value, unit, badge, badgeColor, borderColor }:
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-export default function HistoricalPage() {
+function HistoricalPageContent() {
   const searchParams = useSearchParams()
   const defaultDistrict = searchParams.get("district") || "Lilongwe Central"
   
@@ -232,5 +232,13 @@ export default function HistoricalPage() {
       </div>
 
     </div>
+  )
+}
+
+export default function HistoricalPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-[#6b7a8d]">Loading historical trends...</div>}>
+      <HistoricalPageContent />
+    </Suspense>
   )
 }

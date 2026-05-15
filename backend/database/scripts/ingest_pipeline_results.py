@@ -98,11 +98,11 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
             # dry_spell_probability: accept legacy pipeline JSON while writing the scientific dry-spell table.
             dry_sql = """
             insert into dry_spell_probability (
-              grid_id, baseline_start, baseline_end, dry_spell_probability, total_seasons, dataset_version_id, algorithm_version_id, pipeline_run_id
+              grid_id, baseline_start, baseline_end, dry_spell_threshold, dry_spell_probability, total_seasons, dataset_version_id, algorithm_version_id, pipeline_run_id
             ) values (
-              %(grid_id)s, %(baseline_start)s, %(baseline_end)s, %(prob)s, %(total_seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
+              %(grid_id)s, %(baseline_start)s, %(baseline_end)s, %(dry_spell_threshold)s, %(prob)s, %(total_seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
             )
-            on conflict (grid_id, baseline_start, baseline_end, dataset_version_id, algorithm_version_id) do update
+            on conflict (grid_id, baseline_start, baseline_end, dry_spell_threshold, dataset_version_id, algorithm_version_id) do update
             set dry_spell_probability = excluded.dry_spell_probability,
                 total_seasons = excluded.total_seasons,
                 pipeline_run_id = excluded.pipeline_run_id;
@@ -152,7 +152,12 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
 
                     # dry spell
                     try:
-                        cur.execute(dry_sql, {**params_common, "prob": float(dry_spell_prob) if dry_spell_prob is not None else 0.0, "total_seasons": seasons})
+                        cur.execute(dry_sql, {
+                            **params_common,
+                            "dry_spell_threshold": int(data.get("dry_spell_min_length_days") or 5),
+                            "prob": float(dry_spell_prob) if dry_spell_prob is not None else 0.0,
+                            "total_seasons": seasons,
+                        })
                         ingested["dry"] += 1
                     except Exception:
                         # table may not exist
@@ -191,6 +196,7 @@ def main():
     args = parser.parse_args()
 
     ingest(args.pipeline_run_id, args.baseline_start, args.baseline_end, args.algorithm_version_id, args.dataset_version_id)
+    ingest_additional_tables(args.pipeline_run_id, args.baseline_start, args.baseline_end, args.algorithm_version_id, args.dataset_version_id)
 
 
 if __name__ == "__main__":

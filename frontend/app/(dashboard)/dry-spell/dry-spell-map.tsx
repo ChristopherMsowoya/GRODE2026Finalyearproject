@@ -65,12 +65,13 @@ function toSelectedLocation(props: GridDiagnosticProperties): SelectedLocation {
   }
 }
 
-export default function DrySpellMap({ selectedLocation, onLocationChange, onDistrictDataLoad }: DrySpellMapProps) {
+export default function DrySpellMap({ selectedLocation, onLocationChange, userDistrict, onDistrictDataLoad }: DrySpellMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<L.Map | null>(null)
   const gridLayer = useRef<L.GeoJSON | null>(null)
   const overlayLayers = useRef<L.Layer[]>([])
   const [isClient, setIsClient] = useState(false)
+  const [showDistrictLabels, setShowDistrictLabels] = useState(true)
 
   useEffect(() => setIsClient(true), [])
 
@@ -106,6 +107,15 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, onDist
   }, [isClient])
 
   useEffect(() => {
+    if (!isClient || !map.current || !selectedLocation) return
+    
+    // Zoom to grid
+    if (selectedLocation.gridData?.latitude && selectedLocation.gridData?.longitude) {
+      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 12, { animate: true })
+    }
+  }, [selectedLocation])
+
+  useEffect(() => {
     if (!isClient || !map.current) return
 
     gridLayer.current?.remove()
@@ -123,10 +133,31 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, onDist
       const countryLayer = L.geoJSON(country as any, { style: { color: "#0b3a4a", weight: 2.4, fillOpacity: 0 } }).addTo(map.current)
       const districtLayer = L.geoJSON(districts as any, {
         style: { color: "#111827", weight: 1.1, fillOpacity: 0, opacity: 0.8, dashArray: "3,4" },
+        onEachFeature: (feature: any, layer: any) => {
+          if (!showDistrictLabels) return
+          const name = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || "District"
+          layer.bindTooltip(name, {
+            permanent: true,
+            direction: "center",
+            className: "district-map-label",
+          })
+        },
       }).addTo(map.current)
       overlayLayers.current = [countryLayer, districtLayer]
 
-      try { map.current.fitBounds(countryLayer.getBounds(), { padding: [20, 20] }) } catch {}
+      const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
+      const matchedFeature = (districts as any).features?.find((f: any) => {
+        const name = f.properties?.DISTRICT || f.properties?.name || ''
+        return name.toLowerCase() === activeDistrict.toLowerCase()
+      })
+
+      if (!selectedLocation?.gridData) {
+        if (matchedFeature) {
+          try { map.current.fitBounds(L.geoJSON(matchedFeature as any).getBounds(), { padding: [20, 20] }) } catch {}
+        } else {
+          try { map.current.fitBounds(countryLayer.getBounds(), { padding: [20, 20] }) } catch {}
+        }
+      }
 
       gridLayer.current = L.geoJSON(grid as any, {
         style: (feature: any) => {
@@ -164,11 +195,31 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, onDist
     }
 
     void draw()
-  }, [isClient, selectedLocation?.grid, onLocationChange, onDistrictDataLoad])
+  }, [isClient, selectedLocation?.grid, onLocationChange, onDistrictDataLoad, showDistrictLabels])
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "600px" }}>
       <div ref={mapContainer} style={{ width: "100%", height: "100%", minHeight: "600px" }} />
+      <button
+        onClick={() => setShowDistrictLabels((value) => !value)}
+        className="absolute right-3 top-3 z-[700] rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-sm"
+      >
+        {showDistrictLabels ? "Hide District Names" : "Show District Names"}
+      </button>
+      <style>{`
+        .district-map-label {
+          border: 0;
+          border-radius: 999px;
+          background: rgba(15, 42, 61, 0.78);
+          color: white;
+          font-family: Inter, sans-serif;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          box-shadow: 0 1px 8px rgba(15,42,61,0.18);
+          padding: 2px 7px;
+        }
+      `}</style>
     </div>
   )
 }

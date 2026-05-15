@@ -117,6 +117,7 @@ export default function MapPage() {
   const [dataError, setDataError] = useState<string | null>(null)
   const [dbHealth, setDbHealth] = useState<DatabaseHealthResponse | null>(null)
   const [leaflet, setLeaflet] = useState<typeof import("leaflet") | null>(null)
+  const [showDistrictLabels, setShowDistrictLabels] = useState(true)
 
   const tile = TILES[layerStyle]
 
@@ -295,9 +296,9 @@ export default function MapPage() {
 
             {searchResults.length > 1 && (
               <div className="absolute left-0 top-14 z-[1000] max-h-60 w-full overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white p-2 shadow-xl">
-                {searchResults.map((row) => (
+                {searchResults.map((row, idx) => (
                   <button
-                    key={`${row.location_name}-${row.longitude}-${row.latitude}`}
+                    key={`${row.location_name}-${row.longitude}-${row.latitude}-${idx}`}
                     onClick={() => {
                       setSelectedPlace(row)
                       setSearchResults([])
@@ -329,7 +330,7 @@ export default function MapPage() {
           {gridGeo && <GeoJSON key={`grid-${activeLayer}-${selectedGrid?.grid || "none"}-${gridGeo.features.length}`} data={gridGeo as any} style={gridStyle} onEachFeature={onEachGrid} />}
           {countryGeo && <GeoJSON data={countryGeo as any} style={{ color: "#0F2A3D", weight: 2.4, fillOpacity: 0, opacity: 1 }} />}
           {districtGeo && <GeoJSON data={districtGeo as any} style={{ color: "#111827", weight: 1.1, fillOpacity: 0, opacity: 0.85, dashArray: "3,4" }} />}
-          {leaflet && districtLabels.map((label) => <Marker key={label.name} position={[label.lat, label.lon]} icon={makeDistrictIcon(label.name, leaflet)} />)}
+          {leaflet && showDistrictLabels && districtLabels.map((label) => <Marker key={label.name} position={[label.lat, label.lon]} icon={makeDistrictIcon(label.name, leaflet)} />)}
         </MapContainer>
 
         <div className="absolute left-5 top-5 z-[800] flex flex-wrap gap-2 rounded-xl border border-white/70 bg-white/95 p-2 shadow-lg backdrop-blur">
@@ -343,6 +344,12 @@ export default function MapPage() {
               {LAYER_CONFIG[layer].shortLabel}
             </button>
           ))}
+          <button
+            onClick={() => setShowDistrictLabels((value) => !value)}
+            className={`rounded-lg px-3 py-2 text-[12px] font-bold transition ${showDistrictLabels ? "bg-[#0F2A3D] text-white" : "text-[#0F2A3D] hover:bg-[#eef2f4]"}`}
+          >
+            District Names
+          </button>
         </div>
 
         <div className="absolute bottom-5 left-5 z-[800] w-[250px] rounded-xl border border-white/70 bg-white/95 p-4 shadow-lg backdrop-blur">

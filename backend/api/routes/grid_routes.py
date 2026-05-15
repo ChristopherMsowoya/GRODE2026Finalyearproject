@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
@@ -7,6 +8,8 @@ from backend.database.connection import fetch_all, fetch_one
 router = APIRouter(prefix="/api/grid", tags=["grid"])
 LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 LEGACY_DRY_INTERPRETATION_KEY = "crop_" + "stress_interpretation"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+LOCAL_RESULTS_PATH = PROJECT_ROOT / "backend" / "algorithms" / "outputs" / "results.json"
 
 
 def _row_to_feature(row: dict) -> dict:
@@ -24,6 +27,50 @@ def _feature_collection(rows: list[dict]) -> dict:
         "count": len(rows),
         "features": [_row_to_feature(dict(row)) for row in rows],
     }
+
+
+def _history_from_result(grid_id: str, result: dict) -> dict:
+    diagnostics = result.get("season_diagnostics") or []
+
+    if not diagnostics:
+        seasons = int(result.get("seasons_analyzed") or 1)
+        diagnostics = [
+            {
+                "season": f"S{index + 1}",
+                "season_year": None,
+                "onset_probability": result.get("onset_probability")
+                    or (
+                        (result.get("seasons_with_detected_onset") or 0)
+                        / max(1, result.get("seasons_analyzed") or 1)
+                    ),
+                "false_onset_probability": result.get("false_onset_probability", 0),
+                "dry_spell_probability": result.get(
+                    "dry_spell_probability",
+                    result.get(LEGACY_DRY_PROBABILITY_KEY, 0),
+                ),
+            }
+            for index in range(seasons)
+        ]
+
+    return {
+        "grid_id": grid_id,
+        "season_count": len(diagnostics),
+        "seasons": diagnostics,
+    }
+
+
+def _local_history(grid_id: str) -> dict | None:
+    if not LOCAL_RESULTS_PATH.exists():
+        return None
+
+    with LOCAL_RESULTS_PATH.open("r", encoding="utf-8") as results_file:
+        rows = json.load(results_file)
+
+    match = next((row for row in rows if str(row.get("grid_id")) == str(grid_id)), None)
+    if not match:
+        return None
+
+    return _history_from_result(grid_id, match)
 
 
 def _diagnostic_select_sql() -> str:
@@ -129,6 +176,35 @@ def get_grid_cell(grid_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="Grid cell not found")
     return _row_to_feature(row)
+
+
+@router.get("/cells/{grid_id}/history")
+def get_grid_cell_history(grid_id: str):
+    try:
+        row = fetch_one(
+            """
+            select result
+            from pipeline_results_json
+            where grid_id = %(grid_id)s
+            order by created_at desc
+            limit 1
+            """,
+            {"grid_id": grid_id},
+        )
+    except Exception:
+        row = None
+
+    if row and row.get("result"):
+        result = row["result"]
+        if isinstance(result, str):
+            result = json.loads(result)
+        return _history_from_result(grid_id, result)
+
+    local = _local_history(grid_id)
+    if local:
+        return local
+
+    return {"grid_id": grid_id, "season_count": 0, "seasons": []}
 
 
 @router.get("/intersections")

@@ -93,7 +93,7 @@ export default function FalseOnsetRiskPage() {
 
   const handleDistrictDataLoad = useCallback((data: DistrictSummary[]) => {
     setLiveDistrictData(data)
-    setLiveStatus("live")
+    setLiveStatus(data.length > 0 ? "live" : "error")
   }, [])
 
   const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
@@ -108,9 +108,20 @@ export default function FalseOnsetRiskPage() {
     setDistrictData(data)
   }, [activeDistrict])
 
-  const handleLocationChange = (loc: SelectedLocation) => {
-    setSelectedLocation(loc)
-  }
+  const handleLocationChange = useCallback((loc: SelectedLocation) => {
+    setSelectedLocation((prev) => {
+      if (
+        prev?.district === loc.district &&
+        prev?.ta === loc.ta &&
+        prev?.grid === loc.grid &&
+        prev?.areaName === loc.areaName
+      ) {
+        return prev
+      }
+
+      return loc
+    })
+  }, [])
 
   // We don't have villages mapped to areas, so we use TA or district data
   // When a TA is selected, we could show TA data if we had it loaded here.
@@ -215,10 +226,10 @@ export default function FalseOnsetRiskPage() {
                     <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">False-Onset Prob.</p>
                     <p className="text-[24px] font-bold text-[#0F2A3D]">
                       {selectedLocation?.gridData 
-                        ? (selectedLocation.gridData.false_onset_probability * 100).toFixed(1) 
+                        ? ((selectedLocation.gridData.false_onset_probability ?? 0) * 100).toFixed(1) 
                         : selectedLocation?.taData 
-                          ? (selectedLocation.taData.average_false_onset_probability * 100).toFixed(1) 
-                          : (liveSelectedDistrict.average_false_onset_probability * 100).toFixed(1)}%
+                          ? ((selectedLocation.taData.average_false_onset_probability ?? 0) * 100).toFixed(1) 
+                          : ((liveSelectedDistrict.average_false_onset_probability ?? 0) * 100).toFixed(1)}%
                     </p>
                   </div>
                   <div className="rounded-[14px] bg-[#f0fdf4] p-4 border border-[#bbf7d0]">

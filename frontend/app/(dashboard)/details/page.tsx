@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { fetchGridCell, fetchAlgorithmResults } from "@/lib/algorithm-api"
 import {
@@ -120,7 +120,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-export default function DetailsPage() {
+function DetailsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const gridId = searchParams?.get("grid_id")
@@ -354,5 +354,13 @@ export default function DetailsPage() {
       </div>
 
     </div>
+  )
+}
+
+export default function DetailsPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-[#6b7a8d]">Loading details...</div>}>
+      <DetailsPageContent />
+    </Suspense>
   )
 }

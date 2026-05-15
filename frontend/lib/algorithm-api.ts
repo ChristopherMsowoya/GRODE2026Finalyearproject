@@ -98,6 +98,28 @@ export interface LocationSearchResponse {
   locations: LocationSearchResult[]
 }
 
+export interface LocationHierarchyResponse {
+  district_count: number
+  districts: Array<{
+    district: string
+    ta_count: number
+    traditional_authorities: Array<{
+      ta: string
+      grid_cell_count: number
+      overall_risk_level: "Low" | "Medium" | "High"
+      average_false_onset_probability: number
+      average_dry_spell_probability: number
+    }>
+  }>
+}
+
+export interface TaGridsResponse {
+  grid_count: number
+  traditional_authority: string
+  district: string | null
+  grids: Array<Record<string, unknown>>
+}
+
 export interface GeoJsonFeature {
   type: string
   properties: Record<string, string | number | boolean | null>
@@ -134,39 +156,214 @@ export interface GeoJsonFeatureCollection {
   features: GeoJsonFeature[]
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000"
+export interface GridSeasonDiagnostic {
+  season: string
+  season_year?: number | null
+  onset_probability?: number | null
+  false_onset_probability?: number | null
+  dry_spell_probability?: number | null
+  onset_detected?: boolean
+  false_onset_detected?: boolean
+  dry_spell_detected?: boolean
+  dry_spell_max_length_days?: number | null
+  dry_day_count?: number | null
+}
+
+export interface GridHistoryResponse {
+  grid_id: string
+  season_count: number
+  seasons: GridSeasonDiagnostic[]
+}
+
+const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+const configuredApiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.trim()
+const API_BASE_URL = (configuredApiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/+$/, "")
+const API_TIMEOUT_MS = 10000
+const API_RETRIES = 2
+const API_RETRY_DELAY_MS = 350
 
 const boundaryCache = new Map<string, Promise<GeoJsonFeatureCollection>>()
 const districtSummaryCache = new Map<string, Promise<DistrictSummaryResponse>>()
 const algorithmSummaryCache = new Map<string, Promise<AlgorithmSummary>>()
 const taSummaryCache = new Map<string, Promise<TraditionalAuthoritySummaryResponse>>()
 const taGridCountCache = new Map<string, Promise<TraditionalAuthorityGridCountResponse>>()
+const gridDiagnosticsCache = new Map<string, Promise<GeoJsonFeatureCollection>>()
+const loggedApiFailures = new Set<string>()
 
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    cache: "no-store",
-  })
+type ApiFetchOptions<T> = Omit<RequestInit, "signal"> & {
+  fallback?: T
+  retries?: number
+  retryDelayMs?: number
+  signal?: AbortSignal
+  timeoutMs?: number
+}
 
-  if (!response.ok) {
-    let detail = "Request failed."
+class ApiRequestError extends Error {
+  status?: number
+  retryable: boolean
 
-    try {
-      const errorBody = await response.json()
-      detail = errorBody.detail || detail
-    } catch {
-      // Ignore JSON parsing errors and keep the generic message.
-    }
+  constructor(message: string, options: { status?: number; retryable?: boolean } = {}) {
+    super(message)
+    this.name = "ApiRequestError"
+    this.status = options.status
+    this.retryable = options.retryable ?? false
+  }
+}
 
-    throw new Error(detail)
+const EMPTY_FEATURE_COLLECTION: GeoJsonFeatureCollection = { type: "FeatureCollection", features: [] }
+const EMPTY_ALGORITHM_SUMMARY: AlgorithmSummary = {
+  result_count: 0,
+  seasons_analyzed: 0,
+  risk_counts: { Low: 0, Medium: 0, High: 0 },
+  average_false_onset_probability: 0,
+  average_dry_spell_probability: 0,
+  highest_risk_cells: [],
+}
+const EMPTY_DISTRICT_SUMMARY: DistrictSummaryResponse = { district_count: 0, districts: [] }
+const EMPTY_TA_SUMMARY: TraditionalAuthoritySummaryResponse = {
+  traditional_authority_count: 0,
+  traditional_authorities: [],
+}
+const EMPTY_TA_GRID_COUNTS: TraditionalAuthorityGridCountResponse = {
+  traditional_authority_count: 0,
+  traditional_authorities: [],
+}
+const EMPTY_GRID_HISTORY = (gridId: string): GridHistoryResponse => ({
+  grid_id: gridId,
+  season_count: 0,
+  seasons: [],
+})
+const EMPTY_LOCATION_SEARCH = (query: string): LocationSearchResponse => ({
+  query,
+  match_count: 0,
+  locations: [],
+})
+const EMPTY_LOCATION_HIERARCHY: LocationHierarchyResponse = { district_count: 0, districts: [] }
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError"
+}
+
+function isRetryableApiError(error: unknown) {
+  if (error instanceof ApiRequestError) return error.retryable
+  if (error instanceof TypeError) return true
+  return isAbortError(error)
+}
+
+function toUserFacingApiError(error: unknown) {
+  if (error instanceof ApiRequestError) return error
+  if (error instanceof TypeError) {
+    return new ApiRequestError(`Backend service unavailable at ${API_BASE_URL}.`, { retryable: true })
+  }
+  if (isAbortError(error)) {
+    return new ApiRequestError("Backend request timed out.", { retryable: true })
+  }
+  if (error instanceof Error) return error
+  return new Error("Backend request failed.")
+}
+
+function warnApiFailure(path: string, error: unknown, usingFallback: boolean) {
+  const key = `${path}:${usingFallback ? "fallback" : "throw"}`
+  if (loggedApiFailures.has(key)) return
+  loggedApiFailures.add(key)
+
+  const message = error instanceof Error ? error.message : "Backend request failed."
+  console.warn(
+    `API request warning: ${path} could not reach ${API_BASE_URL}. ${
+      usingFallback ? "Using fallback data." : "No fallback configured."
+    } ${message}`
+  )
+}
+
+function cachePromise<T>(cache: Map<string, Promise<T>>, key: string, factory: () => Promise<T>) {
+  if (!cache.has(key)) {
+    const promise = factory().catch((error) => {
+      cache.delete(key)
+      throw error
+    })
+    cache.set(key, promise)
   }
 
-  return response.json()
+  return cache.get(key)!
+}
+
+async function apiFetch<T>(path: string, init: ApiFetchOptions<T> = {}): Promise<T> {
+  const {
+    fallback,
+    retries = API_RETRIES,
+    retryDelayMs = API_RETRY_DELAY_MS,
+    timeoutMs = API_TIMEOUT_MS,
+    signal,
+    ...requestInit
+  } = init
+
+  let lastError: unknown
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController()
+    let didTimeout = false
+    const timeoutId = setTimeout(() => {
+      didTimeout = true
+      controller.abort()
+    }, timeoutMs)
+
+    const abortFromParent = () => controller.abort()
+    if (signal?.aborted) controller.abort()
+    signal?.addEventListener("abort", abortFromParent, { once: true })
+
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        ...requestInit,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(requestInit.headers || {}),
+        },
+        cache: "no-store",
+      })
+
+      if (!response.ok) {
+        let detail = "Request failed."
+
+        try {
+          const errorBody = await response.json()
+          detail = errorBody.detail || detail
+        } catch {
+          // Keep the generic message when the backend does not return JSON.
+        }
+
+        throw new ApiRequestError(detail, {
+          status: response.status,
+          retryable: response.status >= 500 || response.status === 408 || response.status === 429,
+        })
+      }
+
+      if (response.status === 204) return undefined as T
+      return response.json()
+    } catch (error) {
+      lastError = didTimeout
+        ? new ApiRequestError("Backend request timed out.", { retryable: true })
+        : toUserFacingApiError(error)
+
+      if (signal?.aborted || attempt >= retries || !isRetryableApiError(lastError)) break
+      await delay(retryDelayMs * (attempt + 1))
+    } finally {
+      clearTimeout(timeoutId)
+      signal?.removeEventListener("abort", abortFromParent)
+    }
+  }
+
+  if (fallback !== undefined) {
+    warnApiFailure(path, lastError, true)
+    return fallback
+  }
+
+  warnApiFailure(path, lastError, false)
+  throw toUserFacingApiError(lastError)
 }
 
 export function getApiBaseUrl() {
@@ -174,59 +371,86 @@ export function getApiBaseUrl() {
 }
 
 export function fetchAlgorithmResults() {
-  return apiFetch<AlgorithmResult[]>('/api/results')
+  return apiFetch<AlgorithmResult[]>('/api/results', { fallback: [] })
 }
 
 export function fetchAlgorithmSummary() {
   const key = "algorithm-summary"
 
-  if (!algorithmSummaryCache.has(key)) {
-    algorithmSummaryCache.set(key, apiFetch<AlgorithmSummary>('/api/results/summary'))
-  }
-
-  return algorithmSummaryCache.get(key)!
+  return cachePromise(
+    algorithmSummaryCache,
+    key,
+    () => apiFetch<AlgorithmSummary>('/api/results/summary', { fallback: EMPTY_ALGORITHM_SUMMARY })
+  )
 }
 
 export function fetchDistrictSummary() {
-  // Always fetch fresh -- results update whenever pipeline runs
-  return apiFetch<DistrictSummaryResponse>('/api/results/district-summary')
+  return apiFetch<DistrictSummaryResponse>('/api/results/district-summary', {
+    fallback: EMPTY_DISTRICT_SUMMARY,
+  })
 }
 
 export function fetchTraditionalAuthoritySummary() {
   const key = "ta-summary"
 
-  if (!taSummaryCache.has(key)) {
-    taSummaryCache.set(key, apiFetch<TraditionalAuthoritySummaryResponse>('/api/results/ta-summary'))
-  }
-
-  return taSummaryCache.get(key)!
+  return cachePromise(
+    taSummaryCache,
+    key,
+    () => apiFetch<TraditionalAuthoritySummaryResponse>('/api/results/ta-summary', { fallback: EMPTY_TA_SUMMARY })
+  )
 }
 
 export function fetchDatabaseHealth() {
-  return apiFetch<DatabaseHealthResponse>("/api/database/health")
+  return apiFetch<DatabaseHealthResponse>("/api/database/health", {
+    fallback: { status: "offline", grid_cell_count: 0 },
+  })
 }
 
 export function fetchTraditionalAuthorityGridCounts() {
   const key = "ta-grid-counts"
 
-  if (!taGridCountCache.has(key)) {
-    // New backend exposes grid cell endpoints under /api/grid
-    taGridCountCache.set(
-      key,
-      apiFetch<TraditionalAuthorityGridCountResponse>('/api/grid/ta-counts')
-    )
-  }
-
-  return taGridCountCache.get(key)!
+  return cachePromise(
+    taGridCountCache,
+    key,
+    () => apiFetch<TraditionalAuthorityGridCountResponse>('/api/grid/ta-counts', { fallback: EMPTY_TA_GRID_COUNTS })
+  )
 }
 
-export function searchLocations(name: string, limit = 10) {
+export function searchLocations(name: string, limit = 10, signal?: AbortSignal) {
   const params = new URLSearchParams({
     name,
     limit: String(limit),
   })
 
-  return apiFetch<LocationSearchResponse>(`/api/locations/search?${params.toString()}`)
+  return apiFetch<LocationSearchResponse>(`/api/locations/search?${params.toString()}`, {
+    fallback: EMPTY_LOCATION_SEARCH(name),
+    signal,
+    timeoutMs: 8000,
+  })
+}
+
+export function fetchLocationHierarchy(signal?: AbortSignal) {
+  return apiFetch<LocationHierarchyResponse>("/api/locations/hierarchy", {
+    fallback: EMPTY_LOCATION_HIERARCHY,
+    signal,
+  })
+}
+
+export function fetchTaGrids(district: string, ta: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({
+    district,
+    ta,
+  })
+
+  return apiFetch<TaGridsResponse>(`/api/locations/ta-grids?${params.toString()}`, {
+    fallback: {
+      grid_count: 0,
+      traditional_authority: ta,
+      district,
+      grids: [],
+    },
+    signal,
+  })
 }
 
 export function triggerPipelineRun(region = "malawi") {
@@ -236,7 +460,10 @@ export function triggerPipelineRun(region = "malawi") {
       method: "POST",
       body: JSON.stringify({ region }),
     }
-  )
+  ).then((result) => {
+    invalidateAlgorithmCaches()
+    return result
+  })
 }
 
 // Grid helpers — new DB-backed endpoints
@@ -248,7 +475,7 @@ export function fetchGridCells(params?: { limit?: number; offset?: number; sourc
   if (params?.source_grid) qs.set('source_grid', params.source_grid)
 
   const path = `/api/grid/cells${qs.toString() ? `?${qs.toString()}` : ''}`
-  return apiFetch<any>(path).then(normalizeGeoJsonCollection)
+  return apiFetch<any>(path, { fallback: EMPTY_FEATURE_COLLECTION }).then(normalizeGeoJsonCollection)
 }
 
 export function fetchGridDiagnostics(params?: { limit?: number; offset?: number; source_grid?: string }) {
@@ -259,11 +486,17 @@ export function fetchGridDiagnostics(params?: { limit?: number; offset?: number;
   if (params?.source_grid) qs.set('source_grid', params.source_grid)
 
   const path = `/api/grid/diagnostic-cells${qs.toString() ? `?${qs.toString()}` : ''}`
-  return apiFetch<any>(path).then(normalizeGeoJsonCollection)
+  return cachePromise(
+    gridDiagnosticsCache,
+    path,
+    () => apiFetch<any>(path, { fallback: EMPTY_FEATURE_COLLECTION }).then(normalizeGeoJsonCollection)
+  )
 }
 
 export function fetchGridCell(gridId: string) {
-  return apiFetch<any>(`/api/grid/cells/${encodeURIComponent(gridId)}`).then(normalizeGeoJsonFeature)
+  return apiFetch<any>(`/api/grid/cells/${encodeURIComponent(gridId)}`, {
+    fallback: null,
+  }).then(normalizeGeoJsonFeature)
 }
 
 export function fetchGridIntersections(gridId?: string) {
@@ -272,7 +505,7 @@ export function fetchGridIntersections(gridId?: string) {
   if (gridId) qs.set('grid_id', gridId)
 
   const path = `/api/grid/intersections${qs.toString() ? `?${qs.toString()}` : ''}`
-  return apiFetch<any>(path).then(normalizeGeoJsonCollection)
+  return apiFetch<any>(path, { fallback: EMPTY_FEATURE_COLLECTION }).then(normalizeGeoJsonCollection)
 }
 
 export function fetchPipelineResults(gridId: string, limit = 100) {
@@ -280,14 +513,20 @@ export function fetchPipelineResults(gridId: string, limit = 100) {
   if (gridId) qs.set('grid_id', gridId)
   if (limit) qs.set('limit', String(limit))
   const path = `/api/pipeline-results${qs.toString() ? `?${qs.toString()}` : ''}`
-  return apiFetch<any>(path)
+  return apiFetch<any>(path, { fallback: { count: 0, data: [] } })
+}
+
+export function fetchGridHistory(gridId: string) {
+  return apiFetch<GridHistoryResponse>(`/api/grid/cells/${encodeURIComponent(gridId)}/history`, {
+    fallback: EMPTY_GRID_HISTORY(gridId),
+  })
 }
 
 export function fetchAllPipelineResults(limit = 10000) {
   const qs = new URLSearchParams()
   if (limit) qs.set('limit', String(limit))
   const path = `/api/pipeline-results${qs.toString() ? `?${qs.toString()}` : ''}`
-  return apiFetch<any>(path)
+  return apiFetch<any>(path, { fallback: { count: 0, data: [] } })
 }
 
 function normalizeGeoJsonFeature(raw: any): GeoJsonFeature {
@@ -379,16 +618,14 @@ export function fetchBoundaries(
 ) {
   const key = `${level}:${simplified ? "simplified" : "full"}`
 
-  if (!boundaryCache.has(key)) {
-    boundaryCache.set(
-      key,
-      apiFetch<GeoJsonFeatureCollection>(
-        `/api/boundaries/${level}?simplified=${simplified ? "true" : "false"}`
-      )
+  return cachePromise(
+    boundaryCache,
+    key,
+    () => apiFetch<GeoJsonFeatureCollection>(
+      `/api/boundaries/${level}?simplified=${simplified ? "true" : "false"}`,
+      { fallback: EMPTY_FEATURE_COLLECTION }
     )
-  }
-
-  return boundaryCache.get(key)!
+  )
 }
 
 export function invalidateAlgorithmCaches() {
@@ -396,4 +633,5 @@ export function invalidateAlgorithmCaches() {
   districtSummaryCache.clear()
   taSummaryCache.clear()
   taGridCountCache.clear()
+  gridDiagnosticsCache.clear()
 }

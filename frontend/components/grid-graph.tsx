@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts"
 import { type SelectedLocation } from "./location-selector"
-import { fetchPipelineResults } from "../lib/algorithm-api"
+import { fetchGridHistory, fetchPipelineResults } from "../lib/algorithm-api"
 
 const LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 
@@ -26,12 +26,10 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
       }
 
       try {
-        const res = await fetchPipelineResults(grid)
-        const rows = res?.data || res || []
-
         const points: { season: string; value: number }[] = []
-        for (const r of rows) {
-          const payload = r.result || r
+        const history = await fetchGridHistory(grid)
+
+        for (const payload of (history.seasons || []) as any[]) {
           const season = payload.season_year || payload.season || payload.year || (payload.baseline_start ? String(payload.baseline_start) : undefined)
           const val = metricType === 'false_onset'
             ? (payload.false_onset_probability ?? payload.false_onset_prob)
@@ -39,6 +37,22 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
               ? (payload.dry_spell_probability ?? payload[LEGACY_DRY_PROBABILITY_KEY])
               : (payload.onset_probability ?? (payload.seasons_with_detected_onset && payload.seasons_analyzed ? payload.seasons_with_detected_onset / payload.seasons_analyzed : 0))
           if (typeof val === 'number') points.push({ season: season ? String(season) : `S${points.length+1}`, value: Math.round(val * 100) })
+        }
+
+        if (points.length === 0) {
+          const res = await fetchPipelineResults(grid)
+          const rows = res?.data || res || []
+
+          for (const r of rows) {
+            const payload = r.result || r
+            const season = payload.season_year || payload.season || payload.year || (payload.baseline_start ? String(payload.baseline_start) : undefined)
+            const val = metricType === 'false_onset'
+              ? (payload.false_onset_probability ?? payload.false_onset_prob)
+              : metricType === 'dry_spell'
+                ? (payload.dry_spell_probability ?? payload[LEGACY_DRY_PROBABILITY_KEY])
+                : (payload.onset_probability ?? (payload.seasons_with_detected_onset && payload.seasons_analyzed ? payload.seasons_with_detected_onset / payload.seasons_analyzed : 0))
+            if (typeof val === 'number') points.push({ season: season ? String(season) : `S${points.length+1}`, value: Math.round(val * 100) })
+          }
         }
 
         if (points.length === 0) {

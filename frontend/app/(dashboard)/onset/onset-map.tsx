@@ -6,46 +6,32 @@ import "leaflet/dist/leaflet.css"
 import { fetchDistrictSummary, fetchGridDiagnostics, fetchBoundaries, type DistrictSummary } from "../../../lib/algorithm-api"
 import type { SelectedLocation } from "@/components/location-selector"
 
-interface FalseOnsetMapProps {
+interface OnsetMapProps {
   selectedLocation: SelectedLocation | null
   onLocationChange: (location: SelectedLocation) => void
   userDistrict?: string | null
   onDistrictDataLoad?: (data: DistrictSummary[]) => void
 }
 
-// Color map for false-onset risk level
-function getFalseOnsetColor(falseOnsetProb: number): string {
-  if (falseOnsetProb > 0.60) return "#e36a6a"   // High – Red
-  if (falseOnsetProb > 0.30) return "#f2b24a"   // Medium – Orange
-  return "#9fd3a8"                                // Low – Green
+function getOnsetColor(prob: number): string {
+  const pct = prob * 100
+  if (pct > 80) return "#1F7A63" // High - Green
+  if (pct > 60) return "#4aab85"
+  if (pct > 40) return "#facc15" // Moderate - Yellow
+  if (pct > 20) return "#fb923c" // Low - Orange
+  return "#e36a6a" // Very Low - Red
 }
 
-function getRiskLabel(prob: number): string {
-  if (prob > 0.60) return "High"
-  if (prob > 0.30) return "Medium"
-  return "Low"
-}
-
-function getProbabilityColor(probability: number): string {
-  const pct = Math.max(0, Math.min(100, probability * 100))
-  if (pct <= 20) return "#dbeafe"
-  if (pct <= 40) return "#93c5fd"
-  if (pct <= 60) return "#facc15"
-  if (pct <= 80) return "#fb923c"
-  return "#dc2626"
-}
-
-export default function FalseOnsetMap({
+export default function OnsetMap({
   selectedLocation,
   onLocationChange,
   userDistrict,
   onDistrictDataLoad,
-}: FalseOnsetMapProps) {
+}: OnsetMapProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<L.Map | null>(null)
   const [isClient, setIsClient] = useState(false)
   const [apiStatus, setApiStatus] = useState<"loading" | "live" | "pending" | "error">("loading")
-  const [showDistrictLabels, setShowDistrictLabels] = useState(true)
   const districtLayers = useRef<Map<string, L.GeoJSON<any>>>(new Map())
   const legendRef = useRef<L.Control<any> | null>(null)
   const statusControlRef = useRef<L.Control<any> | null>(null)
@@ -99,7 +85,6 @@ export default function FalseOnsetMap({
       attributionControl: false,
     })
 
-    // No street tiles. We'll show only Malawi admin boundary and the 5km grid overlay.
     L.control.zoom({ position: "topright" }).addTo(map.current)
 
     // Legend
@@ -109,18 +94,26 @@ export default function FalseOnsetMap({
       div.style.cssText =
         "background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: Inter, sans-serif; font-size: 12px; min-width: 160px;"
       div.innerHTML = `
-        <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False-Onset Risk</p>
+        <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">Onset Prob.</p>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e36a6a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">High Risk (&gt;60%)</span>
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #1F7A63; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f;">Very High (&gt;80%)</span>
         </div>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f2b24a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">Medium Risk (31–60%)</span>
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #4aab85; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f;">High (61–80%)</span>
+        </div>
+        <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #facc15; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f;">Moderate (41–60%)</span>
+        </div>
+        <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #fb923c; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f;">Low (21–40%)</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9fd3a8; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">Low Risk (≤30%)</span>
+          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e36a6a; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f;">Very Low (≤20%)</span>
         </div>
       `
       return div
@@ -131,7 +124,7 @@ export default function FalseOnsetMap({
     statusControlRef.current = (L.control as any)({ position: "topleft" })
     statusControlRef.current!.onAdd = () => {
       const div = L.DomUtil.create("div", "api-status")
-      div.id = "api-status-badge"
+      div.id = "api-status-badge-onset"
       div.style.cssText =
         "background: rgba(255,255,255,0.95); padding: 5px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: Inter, sans-serif; box-shadow: 0 1px 6px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 5px;"
       div.innerHTML = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#f2b24a;"></span> Loading live data…`
@@ -142,7 +135,7 @@ export default function FalseOnsetMap({
 
   // Update status badge
   useEffect(() => {
-    const badge = document.getElementById("api-status-badge")
+    const badge = document.getElementById("api-status-badge-onset")
     if (!badge) return
 
     if (apiStatus === "live") {
@@ -154,7 +147,7 @@ export default function FalseOnsetMap({
     }
   }, [apiStatus])
 
-    // Map zooming effect when selection changes
+  // Map zooming effect when selection changes
   useEffect(() => {
     if (!map.current || !selectedLocation) return
     
@@ -177,10 +170,8 @@ export default function FalseOnsetMap({
       boundsGeojsonRef.current = null
     }
 
-    // Load country boundary + grid cells and draw
     async function drawGridCells() {
       try {
-        // country outline for context
         const country = await fetchBoundaries("country", true)
         if (map.current && country && country.features && country.features.length) {
           const outline = L.geoJSON(country, {
@@ -189,7 +180,6 @@ export default function FalseOnsetMap({
           districtLayers.current.set('country-outline', outline as any)
         }
 
-        // fetch district boundaries as reference overlay
         const districts = await fetchBoundaries("districts", true)
         if (map.current && districts && districts.features) {
           const districtLayer = L.geoJSON(districts, {
@@ -197,17 +187,11 @@ export default function FalseOnsetMap({
             onEachFeature: (feature: any, layer: any) => {
               const distName = feature.properties?.DISTRICT || feature.properties?.name || '–'
               layer.bindPopup(`<div style="font-family:Inter,sans-serif;font-size:13px;color:#0d2f3f;"><strong>${distName}</strong></div>`)
-              if (showDistrictLabels) {
-                layer.bindTooltip(distName, {
-                  permanent: true,
-                  direction: "center",
-                  className: "district-map-label",
-                })
-              }
             }
           }).addTo(map.current)
           districtLayers.current.set('districts-overlay', districtLayer as any)
 
+          // If there is a selected district, or default Lilongwe, fit to it
           const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
           if (!selectedLocation?.gridData) { // Don't override grid zoom
             const matchedFeature = districts.features.find((f: any) => {
@@ -228,8 +212,8 @@ export default function FalseOnsetMap({
 
         const gridLayer = L.geoJSON(grid as any, {
           style: (feature) => {
-            const prob = feature?.properties?.false_onset_probability ?? feature?.properties?.false_onset_prob ?? 0
-            const color = getProbabilityColor(Number(prob))
+            const prob = feature?.properties?.onset_probability ?? feature?.properties?.onset_prob ?? 0
+            const color = getOnsetColor(Number(prob))
             const isSelected = (selectedLocation?.grid === feature?.properties?.grid_id) || (selectedLocation?.district === feature?.properties?.district_name)
             return {
               fillColor: color,
@@ -242,13 +226,13 @@ export default function FalseOnsetMap({
             onEachFeature: (feature: any, featureLayer: any) => {
             const props = feature.properties || {}
             const gid = props.grid_id || props.grid || props.gridId || '–'
-            const prob = props.false_onset_probability ?? props.false_onset_prob
+            const prob = props.onset_probability ?? props.onset_prob
             const probText = typeof prob === 'number' ? `${(prob * 100).toFixed(1)}%` : '–'
 
             featureLayer.bindTooltip(
               `<div style="font-family:Inter,sans-serif;font-size:12px;">
                 <strong style="color:#0d2f3f;">Grid ${gid}</strong><br/>
-                <span style="color:#6b7a8d;">False-Onset Prob:</span> ${probText}
+                <span style="color:#6b7a8d;">Onset Prob:</span> ${probText}
               </div>`,
               { direction: 'top', sticky: true }
             )
@@ -258,8 +242,8 @@ export default function FalseOnsetMap({
                 <strong>Grid ${gid}</strong><br/>
                 <span style="color:#6b7a8d;font-size:12px;">
                   District: ${props.district_name || '–'}<br/>
-                  False-Onset Prob: <strong>${probText}</strong><br/>
-                  Onset Prob: <strong>${typeof props.onset_probability === 'number' ? (props.onset_probability * 100).toFixed(1) : '–'}%</strong><br/>
+                  Onset Prob: <strong>${probText}</strong><br/>
+                  False-Onset Prob: <strong>${typeof props.false_onset_probability === 'number' ? (props.false_onset_probability * 100).toFixed(1) : '–'}%</strong><br/>
                   Dry Spell Prob: <strong>${typeof props.dry_spell_probability === 'number' ? (props.dry_spell_probability * 100).toFixed(1) : '–'}%</strong>
                 </span>
               </div>`
@@ -305,33 +289,15 @@ export default function FalseOnsetMap({
     }
 
     drawGridCells()
-  }, [isClient, userDistrict, onLocationChange, selectedLocation?.district, selectedLocation?.grid, showDistrictLabels])
+  }, [isClient, userDistrict, onLocationChange, selectedLocation?.district, selectedLocation?.grid])
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "400px" }}>
       <div ref={mapContainer} style={{ width: "100%", height: "100%", minHeight: "400px" }} />
-      <button
-        onClick={() => setShowDistrictLabels((value) => !value)}
-        className="absolute right-3 top-3 z-[700] rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-sm"
-      >
-        {showDistrictLabels ? "Hide District Names" : "Show District Names"}
-      </button>
       <style>{`
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
-        }
-        .district-map-label {
-          border: 0;
-          border-radius: 999px;
-          background: rgba(15, 42, 61, 0.78);
-          color: white;
-          font-family: Inter, sans-serif;
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 0.04em;
-          box-shadow: 0 1px 8px rgba(15,42,61,0.18);
-          padding: 2px 7px;
         }
       `}</style>
     </div>
