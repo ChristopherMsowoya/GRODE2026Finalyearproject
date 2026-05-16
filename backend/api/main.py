@@ -9,10 +9,11 @@ from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from backend.api.spatial import build_district_summaries, build_ta_summaries, get_grids_for_ta
+from backend.api.spatial import build_district_summaries, build_ta_summaries, get_grids_for_ta, search_places
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -66,6 +67,67 @@ def dry_spell_probability(result: dict) -> float:
     return result.get("dry_spell_probability", result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0))
 
 
+def extract_available_years(results: list[dict]) -> list[int]:
+    years = set()
+    for result in results:
+        for diagnostic in result.get("season_diagnostics") or []:
+            year = diagnostic.get("season_year") or diagnostic.get("year")
+            if isinstance(year, int):
+                years.add(year)
+            elif isinstance(year, str) and year.isdigit():
+                years.add(int(year))
+
+        for key in ("first_detected_onset_date", "latest_detected_onset_date"):
+            value = result.get(key)
+            if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
+                years.add(int(value[:4]))
+
+        first = result.get("first_detected_onset_date")
+        latest = result.get("latest_detected_onset_date")
+        seasons = int(result.get("seasons_analyzed") or 0)
+        if (
+            seasons > 1
+            and isinstance(first, str)
+            and isinstance(latest, str)
+            and len(first) >= 4
+            and len(latest) >= 4
+            and first[:4].isdigit()
+            and latest[:4].isdigit()
+        ):
+            start_year = int(first[:4])
+            end_year = int(latest[:4])
+            if end_year >= start_year:
+                years.update(range(start_year, end_year + 1))
+
+    return sorted(years)
+
+
+def build_season_diagnostics_from_result(result: dict) -> list[dict]:
+    diagnostics = result.get("season_diagnostics") or []
+    if diagnostics:
+        return diagnostics
+
+    years = extract_available_years([result])
+    seasons = int(result.get("seasons_analyzed") or len(years) or 1)
+    if len(years) != seasons and years:
+        years = list(range(years[0], years[0] + seasons))
+
+    return [
+        {
+            "season": str(years[index]) if index < len(years) else f"S{index + 1}",
+            "season_year": years[index] if index < len(years) else None,
+            "onset_probability": result.get("onset_probability")
+            or (
+                (result.get("seasons_with_detected_onset") or 0)
+                / max(1, result.get("seasons_analyzed") or 1)
+            ),
+            "false_onset_probability": result.get("false_onset_probability", 0),
+            "dry_spell_probability": dry_spell_probability(result),
+        }
+        for index in range(seasons)
+    ]
+
+
 class PipelineRunRequest(BaseModel):
     region: str = "malawi"
 
@@ -88,6 +150,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 if supabase_router:
     app.include_router(supabase_router)
@@ -148,7 +211,13 @@ def get_boundaries(level: str, simplified: bool = Query(default=True)):
             detail=f"No GeoJSON file found for boundary level '{level}'.",
         )
 
-    with candidates[0].open("r", encoding="utf-8") as boundary_file:
+    boundary_path = candidates[0]
+    return load_boundary_geojson(str(boundary_path), boundary_path.stat().st_mtime_ns)
+
+
+@lru_cache(maxsize=16)
+def load_boundary_geojson(boundary_path: str, _mtime_ns: int):
+    with Path(boundary_path).open("r", encoding="utf-8") as boundary_file:
         return json.load(boundary_file)
 
 
@@ -226,25 +295,26 @@ def get_grid_history(grid_id: str):
     if not result:
         return {"grid_id": grid_id, "season_count": 0, "seasons": []}
 
-    diagnostics = result.get("season_diagnostics") or []
-    if not diagnostics:
-        seasons = int(result.get("seasons_analyzed") or 1)
-        diagnostics = [
-            {
-                "season": f"S{index + 1}",
-                "season_year": None,
-                "onset_probability": result.get("onset_probability")
-                or (
-                    (result.get("seasons_with_detected_onset") or 0)
-                    / max(1, result.get("seasons_analyzed") or 1)
-                ),
-                "false_onset_probability": result.get("false_onset_probability", 0),
-                "dry_spell_probability": dry_spell_probability(result),
-            }
-            for index in range(seasons)
-        ]
+    diagnostics = build_season_diagnostics_from_result(result)
 
     return {"grid_id": grid_id, "season_count": len(diagnostics), "seasons": diagnostics}
+
+
+@app.get("/api/seasons/years")
+def get_available_season_years():
+    years = extract_available_years(load_results())
+    ranges = []
+    if years:
+        ranges.append({"label": "All Seasons", "value": "all", "start_year": years[0], "end_year": years[-1]})
+        decade_start = (years[0] // 10) * 10
+        while decade_start <= years[-1]:
+            start = max(decade_start, years[0])
+            end = min(decade_start + 9, years[-1])
+            if any(start <= year <= end for year in years):
+                ranges.append({"label": f"{start}-{end}", "value": f"{start}-{end}", "start_year": start, "end_year": end})
+            decade_start += 10
+
+    return {"year_count": len(years), "available_years": years, "ranges": ranges}
 
 
 @app.get("/api/pipeline-results/summary")
@@ -282,22 +352,44 @@ def get_location_hierarchy():
     ta_summaries = build_ta_summaries()
 
     # Group TAs by district
-    district_map: dict[str, list[dict]] = {}
+    district_map: dict[str, dict[str, dict]] = {}
     for ta in ta_summaries:
         district = ta.get("district") or "Unknown"
         if district not in district_map:
-            district_map[district] = []
-        district_map[district].append({
-            "ta": ta["traditional_authority"],
-            "grid_cell_count": ta["grid_cell_count"],
-            "overall_risk_level": ta["overall_risk_level"],
-            "average_false_onset_probability": ta["average_false_onset_probability"],
-            "average_dry_spell_probability": ta["average_dry_spell_probability"],
-        })
+            district_map[district] = {}
+
+        ta_name = ta["traditional_authority"]
+        existing = district_map[district].get(ta_name)
+        if existing:
+            existing["grid_cell_count"] += ta["grid_cell_count"]
+            existing["average_false_onset_probability"] = max(
+                existing["average_false_onset_probability"],
+                ta["average_false_onset_probability"],
+            )
+            existing["average_dry_spell_probability"] = max(
+                existing["average_dry_spell_probability"],
+                ta["average_dry_spell_probability"],
+            )
+            if ta["overall_risk_level"] == "High" or existing["overall_risk_level"] == "High":
+                existing["overall_risk_level"] = "High"
+            elif ta["overall_risk_level"] == "Medium" or existing["overall_risk_level"] == "Medium":
+                existing["overall_risk_level"] = "Medium"
+        else:
+            district_map[district][ta_name] = {
+                "ta": ta_name,
+                "grid_cell_count": ta["grid_cell_count"],
+                "overall_risk_level": ta["overall_risk_level"],
+                "average_false_onset_probability": ta["average_false_onset_probability"],
+                "average_dry_spell_probability": ta["average_dry_spell_probability"],
+            }
 
     hierarchy = sorted(
         [
-            {"district": dist, "ta_count": len(tas), "traditional_authorities": sorted(tas, key=lambda x: x["ta"])}
+            {
+                "district": dist,
+                "ta_count": len(tas),
+                "traditional_authorities": sorted(tas.values(), key=lambda x: x["ta"]),
+            }
             for dist, tas in district_map.items()
             if dist != "Unknown"
         ],
@@ -342,6 +434,23 @@ def search_locations(name: str = Query(...), limit: int = Query(default=10)):
                 "place_type": "Traditional Authority",
                 "population": None,
             })
+
+    existing_location_names = {str(result["location_name"]).lower() for result in results}
+    for place in search_places(name, limit):
+        location_name = place["name"]
+        if location_name.lower() in existing_location_names:
+            location_name = f"{location_name} ({place['place_type']})"
+        results.append({
+            "location_name": location_name,
+            "district": None,
+            "traditional_authority": None,
+            "grid_id": None,
+            "longitude": place["longitude"],
+            "latitude": place["latitude"],
+            "place_type": place["place_type"],
+            "population": place["population"],
+        })
+        existing_location_names.add(location_name.lower())
 
     # Search grids
     # Try to find grids where grid_id == name or grid_code contains name

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import json
+import math
 from pathlib import Path
 from datetime import datetime
 
@@ -26,6 +27,15 @@ TA_GEOJSON_PATH = (
     / "shapefiles"
     / "ADM3(TA)"
     / "geoBoundaries-MWI-ADM3_simplified.geojson"
+)
+PLACES_SHP_PATH = (
+    PROJECT_ROOT
+    / "backend"
+    / "database"
+    / "data"
+    / "shapefiles"
+    / "Location"
+    / "hotosm_mwi_populated_places_points_shp.shp"
 )
 
 
@@ -155,6 +165,47 @@ def representative_point(geometry: dict) -> tuple[float, float]:
         return polygon_centroid(coordinates[0][0])
 
     return 0.0, 0.0
+
+
+def geometry_points(geometry: dict, step: int = 20) -> list[tuple[float, float]]:
+    values: list[tuple[float, float]] = []
+
+    def collect(node):
+        if isinstance(node, list) and node and isinstance(node[0], (int, float)):
+            values.append((float(node[0]), float(node[1])))
+            return
+        for child in node:
+            collect(child)
+
+    collect(geometry["coordinates"])
+    if len(values) <= step:
+        return values
+    return values[::step] + values[-1:]
+
+
+def parent_district_for_geometry(geometry: dict, district_features: list[dict]) -> str | None:
+    sample_points = geometry_points(geometry)
+    best_name = None
+    best_count = 0
+
+    for district_feature in district_features:
+        count = 0
+        for lon, lat in sample_points:
+            if bbox_contains(district_feature["_bbox"], lon, lat) and point_in_geometry(lon, lat, district_feature["geometry"]):
+                count += 1
+        if count > best_count:
+            best_count = count
+            best_name = district_feature["properties"]["shapeName"]
+
+    if best_name:
+        return best_name
+
+    lon, lat = representative_point(geometry)
+    for district_feature in district_features:
+        if bbox_contains(district_feature["_bbox"], lon, lat) and point_in_geometry(lon, lat, district_feature["geometry"]):
+            return district_feature["properties"]["shapeName"]
+
+    return None
 
 
 def risk_level_from_prob(probability: float) -> str:
@@ -291,34 +342,105 @@ def build_ta_summaries():
     district_features = load_geojson_features(str(DISTRICTS_GEOJSON_PATH))
 
     for summary, feature in zip(ta_summaries, load_geojson_features(str(TA_GEOJSON_PATH))):
-        lon, lat = representative_point(feature["geometry"])
-        parent_district = None
-
-        for district_feature in district_features:
-            if bbox_contains(district_feature["_bbox"], lon, lat) and point_in_geometry(lon, lat, district_feature["geometry"]):
-                parent_district = district_feature["properties"]["shapeName"]
-                break
-
-        summary["district"] = parent_district
+        summary["district"] = parent_district_for_geometry(feature["geometry"], district_features)
 
     return ta_summaries
+
+
+@lru_cache(maxsize=1)
+def load_places():
+    try:
+        import shapefile
+    except Exception:
+        return []
+
+    if not PLACES_SHP_PATH.exists():
+        return []
+
+    reader = shapefile.Reader(str(PLACES_SHP_PATH))
+    places = []
+    for shape_record in reader.iterShapeRecords():
+        record = shape_record.record.as_dict()
+        name = record.get("name") or record.get("name_en") or record.get("name_ny")
+        if not name or not shape_record.shape.points:
+            continue
+        lon, lat = shape_record.shape.points[0]
+        places.append({
+            "name": name,
+            "place_type": record.get("place") or "place",
+            "population": record.get("population") or None,
+            "longitude": float(lon),
+            "latitude": float(lat),
+        })
+    return places
+
+
+def squared_distance(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
+    return math.pow(lon1 - lon2, 2) + math.pow(lat1 - lat2, 2)
+
+
+def places_for_ta_feature(ta_feature: dict) -> list[dict]:
+    places = []
+    for place in load_places():
+        if bbox_contains(ta_feature["_bbox"], place["longitude"], place["latitude"]) and point_in_geometry(
+            place["longitude"],
+            place["latitude"],
+            ta_feature["geometry"],
+        ):
+            places.append(place)
+    return places
 
 
 @lru_cache(maxsize=32)
 def get_grids_for_ta(ta_name: str, district_name: str = None) -> list:
     boundary_features = load_geojson_features(str(TA_GEOJSON_PATH))
+    district_features = load_geojson_features(str(DISTRICTS_GEOJSON_PATH))
     results = load_algorithm_results()
-    
-    # We should also ensure the TA matched belongs to the correct district if there are name collisions
-    # but for simplicity we match just by ta_name first
+
     for feature in boundary_features:
-        if feature["properties"]["shapeName"].lower() == ta_name.lower():
-            matched_cells = [
-                result
-                for result in results
-                if bbox_contains(feature["_bbox"], result["longitude"], result["latitude"])
-                and point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
-            ]
-            return matched_cells
-            
+        if feature["properties"]["shapeName"].lower() != ta_name.lower():
+            continue
+
+        if district_name:
+            parent_district = parent_district_for_geometry(feature["geometry"], district_features)
+            if parent_district and parent_district.lower() != district_name.lower():
+                continue
+
+        ta_places = places_for_ta_feature(feature)
+        matched_cells = [
+            dict(result)
+            for result in results
+            if bbox_contains(feature["_bbox"], result["longitude"], result["latitude"])
+            and point_in_geometry(result["longitude"], result["latitude"], feature["geometry"])
+        ]
+
+        for index, cell in enumerate(matched_cells):
+            lon = float(cell.get("longitude") or 0)
+            lat = float(cell.get("latitude") or 0)
+            nearest_place = min(
+                ta_places,
+                key=lambda place: squared_distance(lon, lat, place["longitude"], place["latitude"]),
+                default=None,
+            )
+            if nearest_place:
+                cell["area_name"] = nearest_place["name"]
+                cell["area_place_type"] = nearest_place["place_type"]
+                cell["area_latitude"] = nearest_place["latitude"]
+                cell["area_longitude"] = nearest_place["longitude"]
+            else:
+                cell["area_name"] = f"Grid {cell.get('grid_id', index + 1)}"
+                cell["area_place_type"] = "grid_cell"
+
+        return matched_cells
+
     return []
+
+
+def search_places(name: str, limit: int = 10) -> list[dict]:
+    query = name.lower()
+    matches = [place for place in load_places() if query in place["name"].lower()]
+    matches.sort(key=lambda place: (
+        0 if place["name"].lower().startswith(query) else 1,
+        place["name"],
+    ))
+    return matches[:limit]

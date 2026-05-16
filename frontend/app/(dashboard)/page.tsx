@@ -3,10 +3,9 @@
 import { AlertTriangle, Info, HelpCircle, Tractor, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect } from "react"
 import { useUser } from "@/lib/user-context"
 import { fetchDistrictSummary, type DistrictSummary } from "@/lib/algorithm-api"
-import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 
 function SunRingIcon() {
   return (
@@ -180,7 +179,6 @@ export default function DashboardPage() {
   const { user } = useUser()
   const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
   const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
-  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
 
   useEffect(() => {
     let cancelled = false;
@@ -202,43 +200,13 @@ export default function DashboardPage() {
     return () => { cancelled = true }
   }, [])
 
-  const handleLocationChange = useCallback((loc: SelectedLocation) => {
-    setSelectedLocation((prev) => {
-      if (
-        prev?.district === loc.district &&
-        prev?.ta === loc.ta &&
-        prev?.grid === loc.grid &&
-        prev?.areaName === loc.areaName
-      ) {
-        return prev
-      }
-
-      return loc
-    })
-  }, [])
-
   const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
   const defaultDistrict = formatDistrict(user?.district)
 
-  // Use TA data if a TA is selected, otherwise fall back to district data
-  const activeDistrict = selectedLocation?.district || defaultDistrict
+  const activeDistrict = defaultDistrict
   const districtRiskData = liveDistrictData.find(d => d.district === activeDistrict)
-
-  // If a specific TA is selected, use its risk data
-  const taData = selectedLocation?.taData
-  const effectiveRiskData = taData
-    ? {
-        overall_risk_probability: taData.average_false_onset_probability,
-        average_false_onset_probability: taData.average_false_onset_probability,
-        average_dry_spell_probability: taData.average_dry_spell_probability,
-        grid_cell_count: taData.grid_cell_count,
-        seasons_analyzed: 4,
-      }
-    : districtRiskData
-
-  const displayLabel = taData
-    ? `TA ${selectedLocation?.ta}`
-    : activeDistrict
+  const effectiveRiskData = districtRiskData
+  const displayLabel = activeDistrict
 
   const foProb = effectiveRiskData ? (effectiveRiskData.average_false_onset_probability || 0) : 0.90
   const foLevel = foProb > 0.6 ? "HIGH" : foProb > 0.3 ? "MED" : "LOW"
@@ -327,16 +295,6 @@ export default function DashboardPage() {
       </div>
 
       {/* ─── Location Selector ───────────────────────────────────────────── */}
-      <div
-        className="rounded-2xl p-4"
-        style={{ background: "white", boxShadow: "0 2px 16px -4px rgba(15,42,61,0.08), 0 0 0 1px rgba(226,232,240,0.8)" }}
-      >
-        <LocationSelector
-          onLocationChange={handleLocationChange}
-          defaultDistrict={defaultDistrict}
-        />
-      </div>
-
       {/* ─── API Statistics Layout ─────────────────────────────────────── */}
       <div className="flex items-center gap-4 text-[13px] text-[#6b7a8d] font-medium px-1">
         <div className="flex items-center gap-1.5">

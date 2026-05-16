@@ -1,5 +1,6 @@
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -36,6 +37,11 @@ def _load_local_results() -> list[dict]:
     if not LOCAL_RESULTS_PATH.exists():
         return []
 
+    return _load_local_results_cached(LOCAL_RESULTS_PATH.stat().st_mtime_ns)
+
+
+@lru_cache(maxsize=2)
+def _load_local_results_cached(_mtime_ns: int) -> list[dict]:
     with LOCAL_RESULTS_PATH.open("r", encoding="utf-8") as results_file:
         rows = json.load(results_file)
 
@@ -92,6 +98,13 @@ def _local_result_to_feature(result: dict) -> dict:
 
 
 def _local_feature_collection(limit: int = 5000, offset: int = 0) -> dict:
+    if not LOCAL_RESULTS_PATH.exists():
+        return {"type": "FeatureCollection", "count": 0, "features": [], "source": "local-results"}
+    return _local_feature_collection_cached(limit, offset, LOCAL_RESULTS_PATH.stat().st_mtime_ns)
+
+
+@lru_cache(maxsize=8)
+def _local_feature_collection_cached(limit: int = 5000, offset: int = 0, _mtime_ns: int = 0) -> dict:
     rows = _load_local_results()
     page = rows[offset:offset + limit]
     return {
@@ -106,11 +119,18 @@ def _history_from_result(grid_id: str, result: dict) -> dict:
     diagnostics = result.get("season_diagnostics") or []
 
     if not diagnostics:
+        years = []
+        for key in ("first_detected_onset_date", "latest_detected_onset_date"):
+            value = result.get(key)
+            if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
+                years.append(int(value[:4]))
         seasons = int(result.get("seasons_analyzed") or 1)
+        if years:
+            years = list(range(min(years), min(years) + seasons))
         diagnostics = [
             {
-                "season": f"S{index + 1}",
-                "season_year": None,
+                "season": str(years[index]) if index < len(years) else f"S{index + 1}",
+                "season_year": years[index] if index < len(years) else None,
                 "onset_probability": result.get("onset_probability")
                     or (
                         (result.get("seasons_with_detected_onset") or 0)

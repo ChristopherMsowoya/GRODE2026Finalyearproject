@@ -5,6 +5,7 @@ import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 import {
   fetchBoundaries,
+  fetchDistrictSummary,
   fetchGridDiagnostics,
   type DistrictSummary,
   type GridDiagnosticProperties,
@@ -72,8 +73,28 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
   const overlayLayers = useRef<L.Layer[]>([])
   const [isClient, setIsClient] = useState(false)
   const [showDistrictLabels, setShowDistrictLabels] = useState(true)
+  const [apiStatus, setApiStatus] = useState<"loading" | "live" | "error">("loading")
 
   useEffect(() => setIsClient(true), [])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadDistrictData() {
+      try {
+        const response = await fetchDistrictSummary()
+        if (cancelled) return
+        setApiStatus(response.districts.length > 0 ? "live" : "error")
+        onDistrictDataLoad?.(response.districts)
+      } catch {
+        if (!cancelled) {
+          setApiStatus("error")
+          onDistrictDataLoad?.([])
+        }
+      }
+    }
+    void loadDistrictData()
+    return () => { cancelled = true }
+  }, [onDistrictDataLoad])
 
   useEffect(() => {
     if (!isClient || !mapContainer.current || map.current) return
@@ -191,7 +212,6 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
         },
       }).addTo(map.current)
 
-      onDistrictDataLoad?.([])
     }
 
     void draw()
@@ -202,10 +222,17 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
       <div ref={mapContainer} style={{ width: "100%", height: "100%", minHeight: "600px" }} />
       <button
         onClick={() => setShowDistrictLabels((value) => !value)}
-        className="absolute right-3 top-3 z-[700] rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-sm"
+        className="absolute left-3 top-3 z-[700] rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-sm"
       >
         {showDistrictLabels ? "Hide District Names" : "Show District Names"}
       </button>
+      <div className="absolute bottom-3 left-3 z-[700] flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-[#0F2A3D] shadow-sm">
+        <span
+          className="h-2 w-2 rounded-full"
+          style={{ background: apiStatus === "live" ? "#22c55e" : apiStatus === "error" ? "#e36a6a" : "#f2b24a" }}
+        />
+        {apiStatus === "live" ? "Live Data" : apiStatus === "error" ? "Backend offline" : "Loading live data"}
+      </div>
       <style>{`
         .district-map-label {
           border: 0;

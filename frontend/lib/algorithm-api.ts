@@ -120,6 +120,19 @@ export interface TaGridsResponse {
   grids: Array<Record<string, unknown>>
 }
 
+export interface SeasonRangeOption {
+  label: string
+  value: string
+  start_year: number | null
+  end_year: number | null
+}
+
+export interface SeasonYearsResponse {
+  year_count: number
+  available_years: number[]
+  ranges: SeasonRangeOption[]
+}
+
 export interface GeoJsonFeature {
   type: string
   properties: Record<string, string | number | boolean | null>
@@ -146,6 +159,10 @@ export interface GridDiagnosticProperties {
   onset_probability?: number | null
   false_onset_probability?: number | null
   dry_spell_probability?: number | null
+  area_name?: string | null
+  area_place_type?: string | null
+  area_latitude?: number | null
+  area_longitude?: number | null
   false_onset_interpretation?: string | null
   dry_spell_interpretation?: string | null
   overall_risk_level?: "Low" | "Medium" | "High" | null
@@ -239,6 +256,7 @@ const EMPTY_LOCATION_SEARCH = (query: string): LocationSearchResponse => ({
   locations: [],
 })
 const EMPTY_LOCATION_HIERARCHY: LocationHierarchyResponse = { district_count: 0, districts: [] }
+const EMPTY_SEASON_YEARS: SeasonYearsResponse = { year_count: 0, available_years: [], ranges: [] }
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -519,6 +537,12 @@ export function fetchPipelineResults(gridId: string, limit = 100) {
 export function fetchGridHistory(gridId: string) {
   return apiFetch<GridHistoryResponse>(`/api/grid/cells/${encodeURIComponent(gridId)}/history`, {
     fallback: EMPTY_GRID_HISTORY(gridId),
+  })
+}
+
+export function fetchSeasonYears() {
+  return apiFetch<SeasonYearsResponse>("/api/seasons/years", {
+    fallback: EMPTY_SEASON_YEARS,
   })
 }
 

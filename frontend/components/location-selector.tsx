@@ -21,6 +21,10 @@ interface DistrictOption {
 
 export interface GridOption {
   grid_id: string
+  area_name?: string | null
+  area_place_type?: string | null
+  area_latitude?: number | null
+  area_longitude?: number | null
   latitude: number
   longitude: number
   overall_risk_level: "Low" | "Medium" | "High"
@@ -86,9 +90,24 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
   const abortControllerRef = useRef<AbortController | null>(null)
   const lastEmittedSelectionRef = useRef<string>("")
 
-  // Load hierarchy on mount
+  // Load hierarchy on mount — fall back to static admin data if backend offline
   useEffect(() => {
     const controller = new AbortController()
+
+    const buildFallbackHierarchy = () => {
+      // Build hierarchy from malawiAdministrativeData.json
+      return (malawiAdminData.districts || []).map((d: any) => ({
+        district: d.name,
+        ta_count: (d.traditionalAuthorities || []).length,
+        traditional_authorities: (d.traditionalAuthorities || []).map((ta: any) => ({
+          ta: ta.name,
+          grid_cell_count: (ta.areas || []).length || 1,
+          overall_risk_level: "Low" as const,
+          average_false_onset_probability: 0,
+          average_dry_spell_probability: 0,
+        })),
+      }))
+    }
 
     const fetchHierarchy = async () => {
       setLoading(true)
@@ -96,15 +115,19 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       try {
         const data = await fetchLocationHierarchy(controller.signal)
         if (controller.signal.aborted) return
-        setHierarchy(data.districts || [])
-        if ((data.districts || []).length === 0) {
-          setError("Location data is temporarily unavailable. Filters will recover when the backend is online.")
+        if ((data.districts || []).length > 0) {
+          setHierarchy(data.districts)
+          setError(null)
+        } else {
+          // Backend returned empty — use static fallback silently
+          setHierarchy(buildFallbackHierarchy())
+          setError("offline")
         }
       } catch (e) {
         if (!controller.signal.aborted) {
           console.warn("Hierarchy fetch warning:", e)
-          setHierarchy([])
-          setError("Location data is temporarily unavailable. Filters will recover when the backend is online.")
+          setHierarchy(buildFallbackHierarchy())
+          setError("offline")
         }
       } finally {
         if (!controller.signal.aborted) setLoading(false)
@@ -161,29 +184,14 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     [currentTas, selectedTA]
   )
 
-  // Map area names from json
-  const currentDistrictAdmin = useMemo(
-    () => malawiAdminData.districts.find(d => d.name.toLowerCase() === selectedDistrict.toLowerCase()),
-    [selectedDistrict]
-  )
-  
-  const currentTaAdmin = useMemo(
-    () => currentDistrictAdmin?.traditionalAuthorities.find(t => t.name.toLowerCase().includes(selectedTA.toLowerCase())),
-    [currentDistrictAdmin, selectedTA]
-  )
-  
-  const adminAreas = useMemo(
-    () => currentTaAdmin?.areas || [],
-    [currentTaAdmin]
-  )
-
-  // Combine grids with area names - memoized to prevent circular effects
+  // Area names come from the backend spatial source. Fall back to the grid ID
+  // instead of pairing unrelated static names by array position.
   const gridAreaOptions = useMemo(
     () => taGrids.map((grid, index) => {
-      const areaName = adminAreas[index] ? adminAreas[index].name : `Local Area ${index + 1}`
+      const areaName = grid.area_name || `Grid ${grid.grid_id || index + 1}`
       return { ...grid, areaName }
     }),
-    [taGrids, adminAreas]
+    [taGrids]
   )
 
   const filteredDistricts = useMemo(
@@ -204,8 +212,16 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     [gridAreaOptions, areaSearch]
   )
 
+  const areaNameCounts = useMemo(
+    () => gridAreaOptions.reduce<Record<string, number>>((counts, grid) => {
+      counts[grid.areaName] = (counts[grid.areaName] || 0) + 1
+      return counts
+    }, {}),
+    [gridAreaOptions]
+  )
+
   const currentGridData = useMemo(
-    () => gridAreaOptions.find(g => g.areaName === selectedArea) || null,
+    () => gridAreaOptions.find(g => g.grid_id === selectedArea) || null,
     [gridAreaOptions, selectedArea]
   )
 
@@ -237,7 +253,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       taData: currentTaData,
       grid: currentGridData ? currentGridData.grid_id : null,
       gridData: currentGridData || null,
-      areaName: selectedArea || null,
+      areaName: currentGridData?.areaName || null,
     }
 
     const key = selectionKey(payload)
@@ -273,9 +289,9 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     setTaSearch("")
   }, [])
 
-  const handleAreaSelect = useCallback((areaName: string) => {
+  const handleAreaSelect = useCallback((gridId: string) => {
     setSearchGridSelection(null)
-    setSelectedArea(areaName)
+    setSelectedArea(gridId)
     setAreaOpen(false)
     setAreaSearch("")
   }, [])
@@ -333,6 +349,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
         grid: place.grid_id,
         gridData: {
           grid_id: place.grid_id,
+          area_name: place.location_name,
           latitude: place.latitude,
           longitude: place.longitude,
           overall_risk_level: "Low",
@@ -353,7 +370,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       setSelectedArea("")
     } else {
       setSearchGridSelection(null)
-      setSelectedDistrict(place.district)
+      setSelectedDistrict(place.district || selectedDistrict)
       if (place.traditional_authority) {
         setSelectedTA(place.traditional_authority)
       } else {
@@ -385,21 +402,18 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     )
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center gap-2 px-4 py-3 rounded-xl text-[13px] text-[#D64545]"
-        style={{ background: "rgba(214,69,69,0.06)", border: "1px solid rgba(214,69,69,0.2)" }}>
-        <AlertCircle className="h-4 w-4" />
-        {error}
-      </div>
-    )
-  }
-
-  const risk = currentTaData?.overall_risk_level || (currentDistrict ? "Low" : "Low")
+  const risk = currentTaData?.overall_risk_level || "Low"
   const riskColor = RISK_COLORS[risk]
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-col gap-2">
+      {error === "offline" && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-[#92400e] bg-[#fef3c7] border border-[#fde68a] w-fit">
+          <AlertCircle className="h-3 w-3" />
+          Backend offline — showing static location list. Grid cell data unavailable.
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
       {/* Global Search */}
       <div className="relative">
         <div className="flex items-center gap-2 rounded-xl px-3 py-2 transition-all w-64"
@@ -589,7 +603,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
             ) : (
               <>
                 <span className="max-w-[140px] truncate">
-                  {selectedArea ? `${selectedArea}` : "Select Area"}
+                  {currentGridData?.areaName || "Select Area"}
                 </span>
                 <ChevronDown className={`h-3.5 w-3.5 text-[#6b7a8d] transition-transform ${areaOpen ? "rotate-180" : ""}`} />
               </>
@@ -629,11 +643,13 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                   return (
                     <button
                       key={g.grid_id}
-                      onClick={() => handleAreaSelect(g.areaName)}
+                      onClick={() => handleAreaSelect(g.grid_id)}
                       className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] text-left transition-colors hover:bg-[#f8fafc]"
-                      style={{ color: g.areaName === selectedArea ? "#1F7A63" : "#0F2A3D", fontWeight: g.areaName === selectedArea ? 700 : 500 }}
+                      style={{ color: g.grid_id === selectedArea ? "#1F7A63" : "#0F2A3D", fontWeight: g.grid_id === selectedArea ? 700 : 500 }}
                     >
-                      <span className="truncate max-w-[150px]">{g.areaName}</span>
+                      <span className="truncate max-w-[150px]">
+                        {g.areaName}{areaNameCounts[g.areaName] > 1 ? ` (${g.grid_id})` : ""}
+                      </span>
                       <span
                         className="ml-2 flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full"
                         style={{ color: rc.text, background: rc.bg }}
@@ -662,6 +678,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           {risk} Risk · {currentTaData.grid_cell_count} grid cells
         </div>
       )}
+    </div>
     </div>
   )
 }

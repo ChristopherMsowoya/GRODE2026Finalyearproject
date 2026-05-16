@@ -13,26 +13,10 @@ interface FalseOnsetMapProps {
   onDistrictDataLoad?: (data: DistrictSummary[]) => void
 }
 
-// Color map for false-onset risk level
-function getFalseOnsetColor(falseOnsetProb: number): string {
-  if (falseOnsetProb > 0.60) return "#e36a6a"   // High – Red
-  if (falseOnsetProb > 0.30) return "#f2b24a"   // Medium – Orange
-  return "#9fd3a8"                                // Low – Green
-}
-
-function getRiskLabel(prob: number): string {
-  if (prob > 0.60) return "High"
-  if (prob > 0.30) return "Medium"
-  return "Low"
-}
-
-function getProbabilityColor(probability: number): string {
-  const pct = Math.max(0, Math.min(100, probability * 100))
-  if (pct <= 20) return "#dbeafe"
-  if (pct <= 40) return "#93c5fd"
-  if (pct <= 60) return "#facc15"
-  if (pct <= 80) return "#fb923c"
-  return "#dc2626"
+function getFalseOnsetColor(prob: number): string {
+  if (prob > 0.60) return "#e36a6a"  // High – Red
+  if (prob > 0.30) return "#facc15"  // Moderate – Yellow
+  return "#1F7A63"                   // Low – Green
 }
 
 export default function FalseOnsetMap({
@@ -64,7 +48,6 @@ export default function FalseOnsetMap({
         const response = await fetchDistrictSummary()
         if (cancelled) return
 
-        // Check if pipeline has been run yet
         if ((response as any).pipeline_status === "not_run") {
           setApiStatus("pending")
           onDistrictDataLoad?.([])
@@ -99,28 +82,27 @@ export default function FalseOnsetMap({
       attributionControl: false,
     })
 
-    // No street tiles. We'll show only Malawi admin boundary and the 5km grid overlay.
     L.control.zoom({ position: "topright" }).addTo(map.current)
 
-    // Legend
+    // Legend — colors only, no percentages
     legendRef.current = (L.control as any)({ position: "bottomright" })
     legendRef.current!.onAdd = () => {
       const div = L.DomUtil.create("div", "map-legend")
       div.style.cssText =
-        "background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: Inter, sans-serif; font-size: 12px; min-width: 160px;"
+        "background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: Inter, sans-serif; font-size: 12px; min-width: 140px;"
       div.innerHTML = `
         <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False-Onset Risk</p>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #e36a6a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">High Risk (&gt;60%)</span>
+          <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #e36a6a; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f; font-weight: 600;">High</span>
         </div>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #f2b24a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">Medium Risk (31–60%)</span>
+          <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #facc15; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f; font-weight: 600;">Moderate</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px;">
-          <span style="display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #9fd3a8; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f;">Low Risk (≤30%)</span>
+          <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #1F7A63; flex-shrink: 0;"></span>
+          <span style="color: #0d2f3f; font-weight: 600;">Low</span>
         </div>
       `
       return div
@@ -128,10 +110,10 @@ export default function FalseOnsetMap({
     legendRef.current!.addTo(map.current)
 
     // API status badge
-    statusControlRef.current = (L.control as any)({ position: "topleft" })
+    statusControlRef.current = (L.control as any)({ position: "bottomleft" })
     statusControlRef.current!.onAdd = () => {
       const div = L.DomUtil.create("div", "api-status")
-      div.id = "api-status-badge"
+      div.id = "api-status-badge-falseonset"
       div.style.cssText =
         "background: rgba(255,255,255,0.95); padding: 5px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; font-family: Inter, sans-serif; box-shadow: 0 1px 6px rgba(0,0,0,0.12); display: flex; align-items: center; gap: 5px;"
       div.innerHTML = `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#f2b24a;"></span> Loading live data…`
@@ -142,7 +124,7 @@ export default function FalseOnsetMap({
 
   // Update status badge
   useEffect(() => {
-    const badge = document.getElementById("api-status-badge")
+    const badge = document.getElementById("api-status-badge-falseonset")
     if (!badge) return
 
     if (apiStatus === "live") {
@@ -154,18 +136,17 @@ export default function FalseOnsetMap({
     }
   }, [apiStatus])
 
-    // Map zooming effect when selection changes
+  // Map zooming effect when selection changes
   useEffect(() => {
     if (!map.current || !selectedLocation) return
     
-    // Zoom to grid
     if (selectedLocation.gridData?.latitude && selectedLocation.gridData?.longitude) {
       map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 12, { animate: true })
       return
     }
   }, [selectedLocation])
 
-  // Draw / redraw 5km grid cells whenever the active selection changes
+  // Draw / redraw 5km grid cells whenever the active selection or label toggle changes
   useEffect(() => {
     if (!isClient || !map.current) return
 
@@ -177,10 +158,9 @@ export default function FalseOnsetMap({
       boundsGeojsonRef.current = null
     }
 
-    // Load country boundary + grid cells and draw
     async function drawGridCells() {
       try {
-        // country outline for context
+        // Country outline for context
         const country = await fetchBoundaries("country", true)
         if (map.current && country && country.features && country.features.length) {
           const outline = L.geoJSON(country, {
@@ -189,13 +169,13 @@ export default function FalseOnsetMap({
           districtLayers.current.set('country-outline', outline as any)
         }
 
-        // fetch district boundaries as reference overlay
+        // District boundaries with labels
         const districts = await fetchBoundaries("districts", true)
         if (map.current && districts && districts.features) {
           const districtLayer = L.geoJSON(districts, {
-            style: { color: '#4b5563', weight: 1.5, fillOpacity: 0, dashArray: '4,4' },
+            style: { color: '#111827', weight: 1.1, fillOpacity: 0, opacity: 0.8, dashArray: '3,4' },
             onEachFeature: (feature: any, layer: any) => {
-              const distName = feature.properties?.DISTRICT || feature.properties?.name || '–'
+              const distName = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || 'District'
               layer.bindPopup(`<div style="font-family:Inter,sans-serif;font-size:13px;color:#0d2f3f;"><strong>${distName}</strong></div>`)
               if (showDistrictLabels) {
                 layer.bindTooltip(distName, {
@@ -209,7 +189,7 @@ export default function FalseOnsetMap({
           districtLayers.current.set('districts-overlay', districtLayer as any)
 
           const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
-          if (!selectedLocation?.gridData) { // Don't override grid zoom
+          if (!selectedLocation?.gridData) {
             const matchedFeature = districts.features.find((f: any) => {
               const name = f.properties?.DISTRICT || f.properties?.name || ''
               return name.toLowerCase() === activeDistrict.toLowerCase()
@@ -218,7 +198,7 @@ export default function FalseOnsetMap({
               const bounds = (L.geoJSON(matchedFeature as any) as any).getBounds()
               try { map.current.fitBounds(bounds, { padding: [20, 20] }) } catch {}
             } else if (country) {
-              try { map.current.fitBounds((L.geoJSON(country as any) as any).getBounds(), { padding: [20,20] }) } catch {}
+              try { map.current.fitBounds((L.geoJSON(country as any) as any).getBounds(), { padding: [20, 20] }) } catch {}
             }
           }
         }
@@ -229,14 +209,14 @@ export default function FalseOnsetMap({
         const gridLayer = L.geoJSON(grid as any, {
           style: (feature) => {
             const prob = feature?.properties?.false_onset_probability ?? feature?.properties?.false_onset_prob ?? 0
-            const color = getProbabilityColor(Number(prob))
-            const isSelected = (selectedLocation?.grid === feature?.properties?.grid_id) || (selectedLocation?.district === feature?.properties?.district_name)
+            const color = getFalseOnsetColor(Number(prob))
+            const isSelected = (selectedLocation?.grid === feature?.properties?.grid_id)
             return {
               fillColor: color,
-              color: isSelected ? '#ffffff' : '#ffffff',
-              weight: isSelected ? 2.5 : 0.5,
-              opacity: isSelected ? 1 : 0.6,
-              fillOpacity: isSelected ? 0.9 : 0.7,
+              color: isSelected ? '#ffffff' : '#334155',
+              weight: isSelected ? 2.5 : 0.35,
+              opacity: isSelected ? 1 : 0.55,
+              fillOpacity: isSelected ? 0.92 : 0.72,
             }
           },
             onEachFeature: (feature: any, featureLayer: any) => {
@@ -291,8 +271,8 @@ export default function FalseOnsetMap({
               })
             })
 
-            featureLayer.on('mouseover', function (this: any) { this.setStyle({ weight: 1.5, fillOpacity: 0.92 }) })
-            featureLayer.on('mouseout', function (this: any) { this.setStyle({ weight: 0.5, fillOpacity: 0.7 }) })
+            featureLayer.on('mouseover', function (this: any) { this.setStyle({ weight: 1.5, fillOpacity: 0.95 }) })
+            featureLayer.on('mouseout', function (this: any) { this.setStyle({ weight: 0.35, fillOpacity: 0.72 }) })
 
             districtLayers.current.set(gid, featureLayer)
           }
@@ -308,11 +288,12 @@ export default function FalseOnsetMap({
   }, [isClient, userDistrict, onLocationChange, selectedLocation?.district, selectedLocation?.grid, showDistrictLabels])
 
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "400px" }}>
-      <div ref={mapContainer} style={{ width: "100%", height: "100%", minHeight: "400px" }} />
+    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "500px" }}>
+      <div ref={mapContainer} style={{ width: "100%", height: "100%", minHeight: "500px" }} />
+      {/* Hide/Show District Names button — left corner */}
       <button
         onClick={() => setShowDistrictLabels((value) => !value)}
-        className="absolute right-3 top-3 z-[700] rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-sm"
+        className="absolute left-3 top-3 z-[700] rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-sm"
       >
         {showDistrictLabels ? "Hide District Names" : "Show District Names"}
       </button>

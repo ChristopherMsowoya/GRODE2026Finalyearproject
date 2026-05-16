@@ -1,93 +1,19 @@
 "use client"
 
 import dynamic from "next/dynamic"
-import { useEffect, useState, useCallback } from "react"
-import { useRouter } from "next/navigation"
-import type { LucideIcon } from "lucide-react"
-import { FileText, MapPin, Info, Droplets, Sprout, Bell, ChevronDown, X, Wifi } from "lucide-react"
+import { useState, useCallback } from "react"
+import { Wifi } from "lucide-react"
 import { useUser } from "../../../lib/user-context"
-import { getDistrictData } from "../../../lib/district-data"
-import type { DistrictEnvironmentalData } from "../../../lib/district-data"
 import type { DistrictSummary } from "../../../lib/algorithm-api"
-import malawiDistrictsData from "../../../lib/data/malawiDistricts.json"
-import malawiAdministrativeData from "../../../lib/data/malawiAdministrativeData.json"
 import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 import GridGraph from "@/components/grid-graph"
+import GridDiagnosticWidget from "@/components/grid-diagnostic-widget"
+
 const FalseOnsetMap = dynamic(() => import("./false-onset-map"), { ssr: false })
 
-function RiskMeter({ riskLevel = "caution", probability }: { riskLevel?: string, probability?: number }) {
-  const [visible, setVisible] = useState(false)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setVisible(true), 120)
-    return () => clearTimeout(timer)
-  }, [])
-
-  // Determine meter position and colors based on precise probability or fallback risk level
-  const getRiskPosition = () => {
-    if (typeof probability === 'number') {
-      const percentage = Math.max(5, Math.min(95, probability * 100))
-      const color = riskLevel === 'alert' ? '#e36a6a' : riskLevel === 'caution' ? '#f2b24a' : '#9fd3a8'
-      const label = riskLevel === 'alert' ? 'High' : riskLevel === 'caution' ? 'Medium' : 'Low'
-      return { left: `${percentage}%`, color, label }
-    }
-
-    switch (riskLevel) {
-      case 'alert':
-        return { left: "83.33%", color: "#e36a6a", label: "High" }
-      case 'caution':
-        return { left: "50%", color: "#f2b24a", label: "Medium" }
-      case 'optimal':
-        return { left: "16.67%", color: "#9fd3a8", label: "Low" }
-      default:
-        return { left: "50%", color: "#f2b24a", label: "Medium" }
-    }
-  }
-
-  const riskConfig = getRiskPosition()
-
-  return (
-    <div className="mt-6">
-      <div className="flex justify-between text-[11px] font-semibold uppercase tracking-[0.25em] text-slate-500">
-        <span className="text-[#7cc6a4]">LOW</span>
-        <span className="text-[#f2b24a]">MEDIUM</span>
-        <span className="text-[#e36a6a]">HIGH</span>
-      </div>
-
-      <div className="relative mt-3 h-4 overflow-hidden rounded-full bg-[#eef2f4]">
-        <div
-          className="absolute inset-y-0 left-0 rounded-l-full transition-all duration-700"
-          style={{ width: visible ? "33.33%" : "0%", background: "#9fd3a8" }}
-        />
-        <div
-          className="absolute inset-y-0 transition-all duration-700"
-          style={{ left: "33.33%", width: visible ? "33.33%" : "0%", background: "#f2b24a" }}
-        />
-        <div
-          className="absolute inset-y-0 right-0 rounded-r-full transition-all duration-700"
-          style={{ width: visible ? "33.33%" : "0%", background: "#e36a6a" }}
-        />
-
-        <div
-          className="absolute -top-4 -translate-x-1/2 transition-all duration-700"
-          style={{ left: visible ? riskConfig.left : "50%" }}
-        >
-          <div className="h-0 w-0 border-x-[8px] border-x-transparent border-b-[12px]" style={{ borderBottomColor: riskConfig.color }} />
-          <div className="mt-1 rounded-full px-2 py-1 text-[10px] font-bold text-white uppercase tracking-wide" style={{ background: riskConfig.color }}>
-            {riskConfig.label}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
 export default function FalseOnsetRiskPage() {
-  const router = useRouter()
   const { user } = useUser()
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
-  const [districtData, setDistrictData] = useState<DistrictEnvironmentalData | null>(null)
   const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
   const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
 
@@ -96,105 +22,37 @@ export default function FalseOnsetRiskPage() {
     setLiveStatus(data.length > 0 ? "live" : "error")
   }, [])
 
-  const formatDistrict = (d?: string) => d ? d.charAt(0).toUpperCase() + d.slice(1).toLowerCase() : "Lilongwe"
+  const formatDistrict = (district?: string) => district ? district.charAt(0).toUpperCase() + district.slice(1).toLowerCase() : "Lilongwe"
   const defaultDistrict = formatDistrict(user?.district)
-
-  // Find live data for the selected district
   const activeDistrict = selectedLocation?.district || defaultDistrict
-  const liveSelectedDistrict = liveDistrictData.find(d => d.district === activeDistrict) || null
-
-  useEffect(() => {
-    const data = getDistrictData(activeDistrict.toLowerCase())
-    setDistrictData(data)
-  }, [activeDistrict])
+  const liveSelectedDistrict = liveDistrictData.find((district) => district.district === activeDistrict) || null
 
   const handleLocationChange = useCallback((loc: SelectedLocation) => {
     setSelectedLocation((prev) => {
-      if (
-        prev?.district === loc.district &&
-        prev?.ta === loc.ta &&
-        prev?.grid === loc.grid &&
-        prev?.areaName === loc.areaName
-      ) {
-        return prev
-      }
-
+      if (prev?.district === loc.district && prev?.ta === loc.ta && prev?.grid === loc.grid && prev?.areaName === loc.areaName) return prev
       return loc
     })
   }, [])
 
-  // We don't have villages mapped to areas, so we use TA or district data
-  // When a TA is selected, we could show TA data if we had it loaded here.
-  // The Map handles TA/Grid selection automatically since it's wired to the same api.
-
-  const getRiskLevel = () => {
-    if (selectedLocation?.gridData) {
-      const prob = selectedLocation.gridData.false_onset_probability
-      return prob > 0.6 ? 'alert' : prob > 0.3 ? 'caution' : 'optimal'
-    }
-    if (selectedLocation?.taData) {
-      const level = selectedLocation.taData.overall_risk_level
-      return level === 'High' ? 'alert' : level === 'Medium' ? 'caution' : 'optimal'
-    }
-    if (liveSelectedDistrict) {
-      const level = liveSelectedDistrict.overall_risk_level
-      return level === 'High' ? 'alert' : level === 'Medium' ? 'caution' : 'optimal'
-    }
-    return 'caution'
-  }
-
-  // Get risk level text
-  const getRiskLevelText = (riskLevel: string) => {
-    switch (riskLevel) {
-      case 'alert': return 'High'
-      case 'caution': return 'Medium'
-      case 'optimal': return 'Low'
-      default: return 'Unknown'
-    }
-  }
-
-  // Get risk level color
-  const getRiskLevelColor = (riskLevel: string) => {
-    switch (riskLevel) {
-      case 'alert': return '#e36a6a'
-      case 'caution': return '#f2b24a'
-      case 'optimal': return '#9fd3a8'
-      default: return '#9fd3a8'
-    }
-  }
-
   return (
     <div className="space-y-6 bg-[#eef2f4] px-0 pb-6 md:px-0">
       <div className="rounded-[20px] bg-white p-6 md:p-8 shadow-sm border border-[#e9edf1]">
-        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-3">
-            <p className="text-[12px] uppercase tracking-[0.32em] text-[#6b7a8d]">False-Onset Risk</p>
-            <h1 className="text-4xl font-bold text-[#0F2A3D]">False-Onset Risk</h1>
-            <p className="max-w-2xl text-sm leading-6 text-[#6b7a8d]">
-              Real-time monitoring of early rainfall patterns across Malawi to prevent premature planting losses.
-            </p>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="rounded-full bg-[#fef3e0] px-4 py-2 text-[12px] font-semibold uppercase tracking-[0.24em]" style={{ color: "#d97706" }}>
-              {getRiskLevelText(getRiskLevel())} Risk Zone
-            </div>
-          </div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <h1 className="text-4xl font-bold text-[#0F2A3D]">False-Onset Risk</h1>
+          {liveStatus === "live" && (
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1.5 rounded-full w-fit">
+              <Wifi className="h-3 w-3" /> Live Data
+            </span>
+          )}
         </div>
 
-        {/* ── Location Selector ───────────────────────────────────────────── */}
         <div className="mt-6 pt-6 border-t border-[#e2e8f0]">
-          <LocationSelector
-            onLocationChange={handleLocationChange}
-            defaultDistrict={defaultDistrict}
-          />
+          <LocationSelector onLocationChange={handleLocationChange} defaultDistrict={defaultDistrict} />
         </div>
-
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1fr_400px]">
-        {/* Left Panel: Map Only */}
         <div className="flex flex-col gap-5">
-
           <div className="rounded-[20px] bg-white p-0 shadow-sm border border-[#e9edf1] overflow-hidden" style={{ minHeight: "500px" }}>
             <FalseOnsetMap
               selectedLocation={selectedLocation}
@@ -203,128 +61,23 @@ export default function FalseOnsetRiskPage() {
               onDistrictDataLoad={handleDistrictDataLoad}
             />
           </div>
-
-          {/* ── Grid Graph Visualization ────────────────────────────────────── */}
-          {selectedLocation && selectedLocation.grid && (
-            <GridGraph location={selectedLocation} metricType="false_onset" />
-          )}
+          <GridGraph location={selectedLocation} metricType="false_onset" />
         </div>
 
-        {/* Right Panel: Live Risk Stats Panel */}
         <div className="flex flex-col gap-5">
-          {liveSelectedDistrict ? (
-            <>
-              <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1]">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-[14px] font-bold text-[#0F2A3D]">Live Risk Statistics</h3>
-                  <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] px-3 py-1 rounded-full">
-                    <Wifi className="h-3 w-3" /> Live Data
-                  </span>
-                </div>
-                <div className="flex flex-col gap-4">
-                  <div className="rounded-[14px] bg-[#fdf8f2] p-4 border border-[#f1e6d0]">
-                    <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">False-Onset Prob.</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">
-                      {selectedLocation?.gridData 
-                        ? ((selectedLocation.gridData.false_onset_probability ?? 0) * 100).toFixed(1) 
-                        : selectedLocation?.taData 
-                          ? ((selectedLocation.taData.average_false_onset_probability ?? 0) * 100).toFixed(1) 
-                          : ((liveSelectedDistrict.average_false_onset_probability ?? 0) * 100).toFixed(1)}%
-                    </p>
-                  </div>
-                  <div className="rounded-[14px] bg-[#f0fdf4] p-4 border border-[#bbf7d0]">
-                    <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Grid Cells Analysed</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">
-                      {selectedLocation?.gridData ? 1 : selectedLocation?.taData ? selectedLocation.taData.grid_cell_count : liveSelectedDistrict.grid_cell_count}
-                    </p>
-                  </div>
-                  <div className="rounded-[14px] bg-[#f0f4ff] p-4 border border-[#c7d2fe]">
-                    <p className="text-[11px] uppercase tracking-widest text-[#6b7a8d] mb-1">Seasons Analysed</p>
-                    <p className="text-[24px] font-bold text-[#0F2A3D]">
-                      {selectedLocation?.gridData ? selectedLocation.gridData.seasons_analyzed : liveSelectedDistrict.seasons_analyzed} <span className="text-[14px] font-medium text-[#6b7a8d]">seasons</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Current Planting Risk Status dynamically loaded */}
-              <div className="rounded-[20px] bg-white p-7 shadow-sm border border-[#e9edf1]">
-                <div className="flex flex-col gap-4">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-[16px] font-bold text-[#0F2A3D]">Planting Risk Status</h2>
-                    <span
-                      className="inline-flex rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.2em]"
-                      style={{ 
-                        background: getRiskLevel() === 'alert' ? '#fee2e2' : getRiskLevel() === 'caution' ? '#fef3e0' : '#dcfce7', 
-                        color: getRiskLevel() === 'alert' ? '#dc2626' : getRiskLevel() === 'caution' ? '#d97706' : '#166534' 
-                      }}
-                    >
-                      {getRiskLevelText(getRiskLevel())} RISK
-                    </span>
-                  </div>
-
-                  <RiskMeter 
-                    riskLevel={getRiskLevel()} 
-                    probability={liveSelectedDistrict ? liveSelectedDistrict.overall_risk_probability : undefined} 
-                  />
-
-                  <div
-                    className="mt-4 rounded-[16px] border border-[#f1e6d0] bg-[#fdf8f2] p-4"
-                    style={{ 
-                      borderColor: getRiskLevel() === 'alert' ? '#fca5a5' : getRiskLevel() === 'caution' ? '#f1e6d0' : '#bbf7d0',
-                      backgroundColor: getRiskLevel() === 'alert' ? '#fef2f2' : getRiskLevel() === 'caution' ? '#fdf8f2' : '#f0fdf4'
-                    }}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/50">
-                        <Info className="h-4 w-4" style={{ color: getRiskLevel() === 'alert' ? '#dc2626' : getRiskLevel() === 'caution' ? '#d97706' : '#166534' }} />
-                      </div>
-                      <div>
-                        <p className="text-[14px] font-bold" style={{ color: getRiskLevel() === 'alert' ? '#991b1b' : getRiskLevel() === 'caution' ? '#8a4d00' : '#14532d' }}>
-                          {getRiskLevel() === 'alert' ?
-                            'High risk of false onset. Avoid early planting.' :
-                           getRiskLevel() === 'caution' ?
-                            'Moderate risk. Monitor weather closely.' :
-                            'Low risk conditions. Safe for planting.'}
-                        </p>
-                        <p className="mt-1.5 text-[13px] leading-relaxed text-[#6b7a8d]">
-                          {`The current weather patterns suggest a high probability of a dry spell following initial rains. ${
-                            getRiskLevel() === 'alert' ?
-                              'Planting now may result in total crop loss during the upcoming dry spell.' :
-                            getRiskLevel() === 'caution' ?
-                              'Consider delayed planting or ensure resilient crop varieties.' :
-                              'Algorithm indicators show optimal stability for healthy seedling emergence.'
-                          }`}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex flex-col gap-3">
-                    <button
-                      onClick={() => router.push("/planting-guide")}
-                      className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-[#0b3a4a] px-5 py-3 text-sm font-bold text-white transition hover:bg-[#0e4555]"
-                    >
-                      <FileText className="h-4 w-4" />
-                      View Planting Guide
-                    </button>
-                    <button
-                      onClick={() => router.push("/expert-advice")}
-                      className="w-full inline-flex items-center justify-center gap-2 rounded-full border border-[#d1d9e0] bg-white px-5 py-3 text-sm font-semibold text-[#0b3a4a] transition hover:bg-[#f4f6f8]"
-                    >
-                      <MapPin className="h-4 w-4 text-[#0b3a4a]" />
-                      Locate Expert Advice
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="rounded-[20px] bg-white p-6 shadow-sm border border-[#e9edf1] flex flex-col items-center justify-center text-center" style={{ minHeight: "300px" }}>
-              <div className="mb-4 h-12 w-12 rounded-full border-2 border-dashed border-[#d1d9e0] animate-spin"></div>
-              <p className="text-sm font-medium text-[#6b7a8d]">Awaiting live statistics...</p>
-            </div>
-          )}
+          <GridDiagnosticWidget
+            metricLabel="False Onset Probability"
+            metricValue={
+              selectedLocation?.gridData?.false_onset_probability ??
+              selectedLocation?.taData?.average_false_onset_probability ??
+              liveSelectedDistrict?.average_false_onset_probability ??
+              null
+            }
+            selectedLocation={selectedLocation}
+            defaultDistrict={defaultDistrict}
+            liveStatus={liveStatus}
+            liveDistrict={liveSelectedDistrict}
+          />
         </div>
       </div>
     </div>
