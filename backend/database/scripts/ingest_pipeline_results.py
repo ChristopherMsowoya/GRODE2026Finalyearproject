@@ -108,15 +108,23 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                 pipeline_run_id = excluded.pipeline_run_id;
             """
 
-            # seasonal_onset: store first/latest detected onset and seasons_analyzed
+            # seasonal_onset: store true onset trigger dates per grid and rainy season.
             seasonal_sql = """
             insert into seasonal_onset (
-              grid_id, baseline_start, baseline_end, first_detected_onset_date, latest_detected_onset_date, seasons_analyzed, dataset_version_id, algorithm_version_id, pipeline_run_id
+              grid_id, season_year, onset_date, onset_day_of_year, onset_valid, onset_probability,
+              baseline_start, baseline_end, first_detected_onset_date, latest_detected_onset_date,
+              seasons_analyzed, dataset_version_id, algorithm_version_id, pipeline_run_id
             ) values (
-              %(grid_id)s, %(baseline_start)s, %(baseline_end)s, %(first)s, %(latest)s, %(seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
+              %(grid_id)s, %(season_year)s, %(onset_date)s, %(onset_day_of_year)s, %(onset_valid)s, %(onset_probability)s,
+              %(baseline_start)s, %(baseline_end)s, %(first)s, %(latest)s,
+              %(seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
             )
-            on conflict (grid_id, baseline_start, baseline_end, dataset_version_id, algorithm_version_id) do update
-            set first_detected_onset_date = excluded.first_detected_onset_date,
+            on conflict (grid_id, season_year, dataset_version_id, algorithm_version_id) do update
+            set onset_date = excluded.onset_date,
+                onset_day_of_year = excluded.onset_day_of_year,
+                onset_valid = excluded.onset_valid,
+                onset_probability = excluded.onset_probability,
+                first_detected_onset_date = excluded.first_detected_onset_date,
                 latest_detected_onset_date = excluded.latest_detected_onset_date,
                 seasons_analyzed = excluded.seasons_analyzed,
                 pipeline_run_id = excluded.pipeline_run_id;
@@ -163,12 +171,30 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                         # table may not exist
                         pass
 
-                    # seasonal_onset
-                    try:
-                        cur.execute(seasonal_sql, {**params_common, "first": data.get("first_detected_onset_date"), "latest": data.get("latest_detected_onset_date"), "seasons": seasons})
-                        ingested["seasonal"] += 1
-                    except Exception:
-                        pass
+                    for diagnostic in data.get("season_diagnostics") or []:
+                        season_year = diagnostic.get("season_year")
+                        if season_year is None:
+                            continue
+                        onset_date = diagnostic.get("onset_date")
+                        onset_day = None
+                        if onset_date:
+                            from datetime import date
+                            onset_day = date.fromisoformat(str(onset_date)[:10]).timetuple().tm_yday
+                        try:
+                            cur.execute(seasonal_sql, {
+                                **params_common,
+                                "season_year": int(season_year),
+                                "onset_date": onset_date,
+                                "onset_day_of_year": onset_day,
+                                "onset_valid": bool(diagnostic.get("onset_detected")),
+                                "onset_probability": float(diagnostic.get("onset_probability") or 0),
+                                "first": data.get("first_detected_onset_date"),
+                                "latest": data.get("latest_detected_onset_date"),
+                                "seasons": seasons,
+                            })
+                            ingested["seasonal"] += 1
+                        except Exception:
+                            pass
 
                     # onset_climatology
                     try:

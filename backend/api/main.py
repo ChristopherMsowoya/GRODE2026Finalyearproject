@@ -4,8 +4,9 @@ import os
 import sys
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import lru_cache
+import math
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,16 @@ from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from backend.api.spatial import build_district_summaries, build_ta_summaries, get_grids_for_ta, search_places
+from backend.api.spatial import (
+    DISTRICTS_GEOJSON_PATH,
+    bbox_contains,
+    build_district_summaries,
+    build_ta_summaries,
+    get_grids_for_ta,
+    load_geojson_features,
+    point_in_geometry,
+    search_places,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -126,6 +136,105 @@ def build_season_diagnostics_from_result(result: dict) -> list[dict]:
         }
         for index in range(seasons)
     ]
+
+
+def probability_for_onset(result: dict) -> float:
+    if isinstance(result.get("onset_probability"), (int, float)):
+        return float(result["onset_probability"])
+    seasons = result.get("seasons_analyzed") or 0
+    detected = result.get("seasons_with_detected_onset") or 0
+    return float(detected / seasons) if seasons else 0.0
+
+
+def filter_diagnostics_by_range(diagnostics: list[dict], start_year: int | None, end_year: int | None) -> list[dict]:
+    if start_year is None and end_year is None:
+        return diagnostics
+    filtered = []
+    for diagnostic in diagnostics:
+        year = diagnostic.get("season_year")
+        if isinstance(year, str) and year.isdigit():
+            year = int(year)
+        if not isinstance(year, int):
+            continue
+        if start_year is not None and year < start_year:
+            continue
+        if end_year is not None and year > end_year:
+            continue
+        filtered.append(diagnostic)
+    return filtered
+
+
+def percentile(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    rank = (len(sorted_values) - 1) * pct
+    lower = math.floor(rank)
+    upper = math.ceil(rank)
+    if lower == upper:
+        return sorted_values[lower]
+    weight = rank - lower
+    return sorted_values[lower] * (1 - weight) + sorted_values[upper] * weight
+
+
+def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
+    valid = [
+        diagnostic
+        for diagnostic in diagnostics
+        if diagnostic.get("onset_detected") and diagnostic.get("onset_date") and diagnostic.get("season_year") is not None
+    ]
+    offsets = []
+    for diagnostic in valid:
+        try:
+            onset_date = datetime.fromisoformat(str(diagnostic["onset_date"])).date()
+            season_year = int(diagnostic["season_year"])
+            season_start = datetime(season_year, 11, 1).date()
+            offsets.append((onset_date - season_start).days)
+        except Exception:
+            continue
+
+    if not offsets:
+        return {
+            "p10_onset_date": None,
+            "median_onset_date": None,
+            "p90_onset_date": None,
+            "trigger_count": 0,
+            "series": [],
+        }
+
+    median_year = int(valid[len(valid) // 2]["season_year"])
+    season_start = datetime(median_year, 11, 1).date()
+
+    def date_at(pct: float):
+        value = percentile(offsets, pct)
+        if value is None:
+            return None
+        return (season_start + timedelta(days=round(value))).isoformat()
+
+    return {
+        "p10_onset_date": date_at(0.10),
+        "median_onset_date": date_at(0.50),
+        "p90_onset_date": date_at(0.90),
+        "trigger_count": len(offsets),
+        "series": [
+            {
+                "season": diagnostic.get("season"),
+                "season_year": diagnostic.get("season_year"),
+                "onset_date": diagnostic.get("onset_date"),
+                "onset_probability": diagnostic.get("onset_probability", 1.0),
+            }
+            for diagnostic in valid
+        ],
+    }
+
+
+def nearest_grid(lon: float, lat: float, results: list[dict]) -> dict | None:
+    return min(
+        results,
+        key=lambda row: math.pow(float(row.get("longitude") or row.get("centroid_lon") or 0) - lon, 2)
+        + math.pow(float(row.get("latitude") or row.get("centroid_lat") or 0) - lat, 2),
+        default=None,
+    )
 
 
 class PipelineRunRequest(BaseModel):
@@ -317,6 +426,124 @@ def get_available_season_years():
     return {"year_count": len(years), "available_years": years, "ranges": ranges}
 
 
+@app.get("/api/dashboard/overview")
+def get_dashboard_overview():
+    results = normalize_results(load_results())
+    if not results:
+        return {
+            "grid_count": 0,
+            "season_count": 0,
+            "available_years": [],
+            "average_onset_probability": 0,
+            "average_false_onset_probability": 0,
+            "average_dry_spell_probability": 0,
+        }
+
+    years = extract_available_years(results)
+    return {
+        "grid_count": len(results),
+        "season_count": len(years),
+        "available_years": years,
+        "average_onset_probability": round(sum(probability_for_onset(result) for result in results) / len(results), 3),
+        "average_false_onset_probability": round(sum(float(result.get("false_onset_probability") or 0) for result in results) / len(results), 3),
+        "average_dry_spell_probability": round(sum(dry_spell_probability(result) for result in results) / len(results), 3),
+    }
+
+
+@app.get("/api/grid/search")
+def search_grid_locations(q: str = Query(..., min_length=2), limit: int = Query(default=8, ge=1, le=20)):
+    query = q.lower()
+    results = normalize_results(load_results())
+    matches = []
+
+    def row_payload(row: dict, location_name: str, place_type: str, district: str | None = None, ta: str | None = None):
+        return {
+            "location_name": location_name,
+            "district": district or row.get("district_name") or row.get("district"),
+            "traditional_authority": ta,
+            "grid_id": str(row.get("grid_id")),
+            "longitude": float(row.get("longitude") or row.get("centroid_lon") or 0),
+            "latitude": float(row.get("latitude") or row.get("centroid_lat") or 0),
+            "place_type": place_type,
+            "onset_probability": probability_for_onset(row),
+            "false_onset_probability": float(row.get("false_onset_probability") or 0),
+            "dry_spell_probability": dry_spell_probability(row),
+            "seasons_analyzed": row.get("seasons_analyzed") or 0,
+            "seasons_with_detected_onset": row.get("seasons_with_detected_onset") or 0,
+            "first_detected_onset_date": row.get("first_detected_onset_date"),
+            "latest_detected_onset_date": row.get("latest_detected_onset_date"),
+            "overall_risk_level": row.get("overall_risk_level") or "Low",
+        }
+
+    for row in results:
+        grid_id = str(row.get("grid_id", ""))
+        grid_code = str(row.get("grid_code", ""))
+        if query in grid_id.lower() or query in grid_code.lower():
+            matches.append(row_payload(row, f"Grid {grid_id}", "Grid Cell"))
+
+    for district in build_district_summaries():
+        district_name = district.get("district", "")
+        if query not in district_name.lower():
+            continue
+        district_grids = [
+            row for row in results
+            if (row.get("district_name") or row.get("district") or "").lower() == district_name.lower()
+        ]
+        candidate = district_grids[0] if district_grids else nearest_grid(34.2, -13.5, results)
+        if candidate:
+            matches.append(row_payload(candidate, district_name, "District", district=district_name))
+
+    for ta in build_ta_summaries():
+        ta_name = ta.get("traditional_authority", "")
+        if query not in ta_name.lower():
+            continue
+        grids = get_grids_for_ta(ta_name, ta.get("district"))
+        candidate = grids[0] if grids else None
+        if candidate:
+            matches.append(row_payload(candidate, f"{ta_name} (TA)", "Traditional Authority", district=ta.get("district"), ta=ta_name))
+
+    for place in search_places(q, limit):
+        candidate = nearest_grid(place["longitude"], place["latitude"], results)
+        if candidate:
+            matches.append(row_payload(candidate, place["name"], place["place_type"]))
+
+    seen = set()
+    unique = []
+    for match in matches:
+        key = (match["location_name"], match["grid_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(match)
+
+    unique.sort(key=lambda item: (
+        0 if item["location_name"].lower().startswith(query) else 1,
+        item["location_name"],
+    ))
+    return {"query": q, "match_count": len(unique[:limit]), "locations": unique[:limit]}
+
+
+@app.get("/api/onset/timeline")
+def get_onset_timeline(
+    grid_id: str = Query(...),
+    start_year: int | None = Query(default=None),
+    end_year: int | None = Query(default=None),
+):
+    results = normalize_results(load_results())
+    result = next((row for row in results if str(row.get("grid_id")) == str(grid_id)), None)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Grid cell {grid_id} not found.")
+
+    diagnostics = filter_diagnostics_by_range(build_season_diagnostics_from_result(result), start_year, end_year)
+    timeline = onset_timeline_from_diagnostics(diagnostics)
+    return {
+        "grid_id": grid_id,
+        "start_year": start_year,
+        "end_year": end_year,
+        **timeline,
+    }
+
+
 @app.get("/api/pipeline-results/summary")
 def get_pipeline_results_summary():
     return get_results_summary()
@@ -403,20 +630,55 @@ def get_location_hierarchy():
 def search_locations(name: str = Query(...), limit: int = Query(default=10)):
     name_lower = name.lower()
     results = []
+    grid_results = normalize_results(load_results())
+
+    def nearest_grid_payload(lon: float, lat: float):
+        grid = nearest_grid(lon, lat, grid_results)
+        if not grid:
+            return {}
+        return {
+            "grid_id": str(grid.get("grid_id")),
+            "longitude": float(grid.get("longitude") or grid.get("centroid_lon") or lon),
+            "latitude": float(grid.get("latitude") or grid.get("centroid_lat") or lat),
+            "onset_probability": probability_for_onset(grid),
+            "false_onset_probability": float(grid.get("false_onset_probability") or 0),
+            "dry_spell_probability": dry_spell_probability(grid),
+            "seasons_analyzed": grid.get("seasons_analyzed") or 0,
+            "seasons_with_detected_onset": grid.get("seasons_with_detected_onset") or 0,
+            "first_detected_onset_date": grid.get("first_detected_onset_date"),
+            "latest_detected_onset_date": grid.get("latest_detected_onset_date"),
+            "overall_risk_level": grid.get("overall_risk_level") or "Low",
+            "district": grid.get("district_name") or grid.get("district"),
+        }
 
     # Search districts
     district_summaries = build_district_summaries()
     for d in district_summaries:
         if name_lower in d["district"].lower():
+            candidate = next(
+                (
+                    grid for grid in grid_results
+                    if (grid.get("district_name") or grid.get("district") or "").lower() == d["district"].lower()
+                ),
+                None,
+            )
             results.append({
                 "location_name": d["district"],
                 "district": d["district"],
                 "traditional_authority": None,
-                "grid_id": None,
-                "longitude": 0.0,
-                "latitude": 0.0,
+                "grid_id": str(candidate.get("grid_id")) if candidate else None,
+                "longitude": float(candidate.get("longitude") or candidate.get("centroid_lon") or 0.0) if candidate else 0.0,
+                "latitude": float(candidate.get("latitude") or candidate.get("centroid_lat") or 0.0) if candidate else 0.0,
                 "place_type": "District",
                 "population": None,
+                "onset_probability": probability_for_onset(candidate) if candidate else 0,
+                "false_onset_probability": float(candidate.get("false_onset_probability") or 0) if candidate else 0,
+                "dry_spell_probability": dry_spell_probability(candidate) if candidate else 0,
+                "seasons_analyzed": candidate.get("seasons_analyzed") if candidate else 0,
+                "seasons_with_detected_onset": candidate.get("seasons_with_detected_onset") if candidate else 0,
+                "first_detected_onset_date": candidate.get("first_detected_onset_date") if candidate else None,
+                "latest_detected_onset_date": candidate.get("latest_detected_onset_date") if candidate else None,
+                "overall_risk_level": candidate.get("overall_risk_level") if candidate else "Low",
             })
 
     # Search TAs
@@ -424,15 +686,25 @@ def search_locations(name: str = Query(...), limit: int = Query(default=10)):
     for ta in ta_summaries:
         ta_name = ta.get("traditional_authority", "")
         if name_lower in ta_name.lower():
+            grids = get_grids_for_ta(ta_name, ta.get("district"))
+            candidate = grids[0] if grids else None
             results.append({
                 "location_name": f"{ta_name} (TA)",
                 "district": ta.get("district"),
                 "traditional_authority": ta_name,
-                "grid_id": None,
-                "longitude": 0.0,
-                "latitude": 0.0,
+                "grid_id": str(candidate.get("grid_id")) if candidate else None,
+                "longitude": float(candidate.get("longitude") or candidate.get("centroid_lon") or 0.0) if candidate else 0.0,
+                "latitude": float(candidate.get("latitude") or candidate.get("centroid_lat") or 0.0) if candidate else 0.0,
                 "place_type": "Traditional Authority",
                 "population": None,
+                "onset_probability": probability_for_onset(candidate) if candidate else 0,
+                "false_onset_probability": float(candidate.get("false_onset_probability") or 0) if candidate else 0,
+                "dry_spell_probability": dry_spell_probability(candidate) if candidate else 0,
+                "seasons_analyzed": candidate.get("seasons_analyzed") if candidate else 0,
+                "seasons_with_detected_onset": candidate.get("seasons_with_detected_onset") if candidate else 0,
+                "first_detected_onset_date": candidate.get("first_detected_onset_date") if candidate else None,
+                "latest_detected_onset_date": candidate.get("latest_detected_onset_date") if candidate else None,
+                "overall_risk_level": candidate.get("overall_risk_level") if candidate else "Low",
             })
 
     existing_location_names = {str(result["location_name"]).lower() for result in results}
@@ -440,23 +712,24 @@ def search_locations(name: str = Query(...), limit: int = Query(default=10)):
         location_name = place["name"]
         if location_name.lower() in existing_location_names:
             location_name = f"{location_name} ({place['place_type']})"
+        grid_payload = nearest_grid_payload(place["longitude"], place["latitude"])
         results.append({
             "location_name": location_name,
-            "district": None,
+            "district": grid_payload.get("district"),
             "traditional_authority": None,
-            "grid_id": None,
-            "longitude": place["longitude"],
-            "latitude": place["latitude"],
+            "grid_id": grid_payload.get("grid_id"),
+            "longitude": grid_payload.get("longitude", place["longitude"]),
+            "latitude": grid_payload.get("latitude", place["latitude"]),
             "place_type": place["place_type"],
             "population": place["population"],
+            **{key: value for key, value in grid_payload.items() if key not in {"district", "grid_id", "longitude", "latitude"}},
         })
         existing_location_names.add(location_name.lower())
 
     # Search grids
     # Try to find grids where grid_id == name or grid_code contains name
     try:
-        all_grids = load_results()
-        for g in all_grids:
+        for g in grid_results:
             grid_id_str = str(g.get("grid_id", ""))
             grid_code_str = str(g.get("grid_code", ""))
             if name_lower in grid_id_str.lower() or name_lower in grid_code_str.lower():
@@ -541,10 +814,7 @@ def get_district_results(district: str = Query(...)):
 def get_ta_grids(district: str = Query(None), ta: str = Query(...)):
     """Return individual grid cell risk data for a specific Traditional Authority."""
     grids = get_grids_for_ta(ta, district)
-    
-    if not grids:
-        raise HTTPException(status_code=404, detail=f"No grids found for TA '{ta}'")
-        
+
     return {
         "grid_count": len(grids),
         "traditional_authority": ta,
@@ -621,6 +891,11 @@ def _load_results_cached(_results_mtime_ns: int):
 
 def normalize_results(results: list[dict]) -> list[dict]:
     normalized = []
+    try:
+        districts = load_geojson_features(str(DISTRICTS_GEOJSON_PATH))
+    except Exception:
+        districts = []
+
     for result in results:
         row = dict(result)
         if "dry_spell_probability" not in row:
@@ -629,5 +904,18 @@ def normalize_results(results: list[dict]) -> list[dict]:
             row["dry_spell_interpretation"] = row.get(LEGACY_DRY_INTERPRETATION_KEY)
         row.pop(LEGACY_DRY_PROBABILITY_KEY, None)
         row.pop(LEGACY_DRY_INTERPRETATION_KEY, None)
+
+        if districts:
+            lon = float(row.get("longitude") or row.get("centroid_lon") or 0)
+            lat = float(row.get("latitude") or row.get("centroid_lat") or 0)
+            matched_district = None
+            for district in districts:
+                if bbox_contains(district["_bbox"], lon, lat) and point_in_geometry(lon, lat, district["geometry"]):
+                    matched_district = district["properties"].get("shapeName") or district["properties"].get("DISTRICT")
+                    break
+            if not matched_district:
+                continue
+            row["district_name"] = matched_district
+
         normalized.append(row)
     return normalized

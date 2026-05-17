@@ -2,17 +2,17 @@
 
 import { useEffect, useRef, useState } from "react"
 import "leaflet/dist/leaflet.css"
-import { Database, Loader2, X } from "lucide-react"
+import { Database, Eye, EyeOff, Loader2, Move, Search } from "lucide-react"
 import {
   fetchBoundaries,
   fetchDatabaseHealth,
   fetchGridDiagnostics,
+  searchGridLocations,
   type DatabaseHealthResponse,
   type DiagnosticLayer,
   type GeoJsonFeatureCollection,
   type GridDiagnosticProperties,
 } from "@/lib/algorithm-api"
-import type { SelectedLocation } from "@/components/location-selector"
 
 const LAYER_CONFIG: Record<DiagnosticLayer, { label: string; shortLabel: string; color: string }> = {
   onset: { label: "Onset Probability", shortLabel: "Onset", color: "#1F7A63" },
@@ -52,35 +52,6 @@ function gridStyle(props: Record<string, any>, layer: DiagnosticLayer, selectedG
   }
 }
 
-function selectedLocationFromGrid(props: GridDiagnosticProperties): SelectedLocation {
-  const seasons = props.seasons_analyzed ?? 0
-  const onsetRate = props.onset_probability ?? (
-    props.seasons_with_detected_onset && seasons ? props.seasons_with_detected_onset / seasons : 0
-  )
-  return {
-    district: props.district_name || "Unknown",
-    ta: null,
-    taData: null,
-    grid: props.grid_id,
-    areaName: props.area_name || props.grid_code || props.grid_id,
-    gridData: {
-      grid_id: props.grid_id,
-      latitude: Number(props.centroid_lat ?? props.latitude ?? 0),
-      longitude: Number(props.centroid_lon ?? props.longitude ?? 0),
-      overall_risk_level: props.overall_risk_level || "Low",
-      false_onset_probability: props.false_onset_probability ?? 0,
-      dry_spell_probability: props.dry_spell_probability ?? 0,
-      onset_probability: onsetRate,
-      seasons_analyzed: seasons,
-      seasons_with_detected_onset: props.seasons_with_detected_onset ?? 0,
-      first_detected_onset_date: props.first_detected_onset_date ?? null,
-      latest_detected_onset_date: props.latest_detected_onset_date ?? null,
-      false_onset_interpretation: props.false_onset_interpretation ?? "",
-      dry_spell_interpretation: props.dry_spell_interpretation ?? "",
-    },
-  }
-}
-
 export default function MapPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<any>(null)
@@ -90,6 +61,7 @@ export default function MapPage() {
   const legendRef = useRef<any>(null)
   const selectedLayerRef = useRef<any>(null)
   const selectedGridIdRef = useRef<string | null>(null)
+  const searchAbortRef = useRef<AbortController | null>(null)
   const [leaflet, setLeaflet] = useState<any>(null)
 
   const [activeLayer, setActiveLayer] = useState<DiagnosticLayer>("onset")
@@ -97,12 +69,19 @@ export default function MapPage() {
   const [gridGeo, setGridGeo] = useState<GeoJsonFeatureCollection | null>(null)
   const [countryGeo, setCountryGeo] = useState<GeoJsonFeatureCollection | null>(null)
   const [districtGeo, setDistrictGeo] = useState<GeoJsonFeatureCollection | null>(null)
-  const [selectedGrid, setSelectedGrid] = useState<SelectedLocation | null>(null)
-  const [showActiveGridPanel, setShowActiveGridPanel] = useState(true)
+
   const [showDistrictLabels, setShowDistrictLabels] = useState(true)
   const [dataError, setDataError] = useState<string | null>(null)
   const [dbHealth, setDbHealth] = useState<DatabaseHealthResponse | null>(null)
   const [dataLoading, setDataLoading] = useState(true)
+  const [selectedGridInfo, setSelectedGridInfo] = useState<GridDiagnosticProperties | null>(null)
+  const [showSelectedPanel, setShowSelectedPanel] = useState(true)
+  const [panelPosition, setPanelPosition] = useState({ x: 20, y: 92 })
+  const [draggingPanel, setDraggingPanel] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [searchText, setSearchText] = useState("")
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
 
   useEffect(() => { setIsClient(true) }, [])
 
@@ -147,7 +126,7 @@ export default function MapPage() {
         const firstGrid = grid.features[0]?.properties as unknown as GridDiagnosticProperties | undefined
         if (firstGrid?.grid_id) {
           selectedGridIdRef.current = firstGrid.grid_id
-          setSelectedGrid(selectedLocationFromGrid(firstGrid))
+          setSelectedGridInfo(firstGrid)
         }
       } catch (error) {
         if (!cancelled) setDataError(error instanceof Error ? error.message : "Failed to load grid diagnostics.")
@@ -169,17 +148,16 @@ export default function MapPage() {
 
     if (!countryGeo || !districtGeo || !gridGeo) return
 
-    countryLayerRef.current = leaflet.geoJSON(countryGeo as any, {
-      style: { color: "#0b3a4a", weight: 2.4, fillOpacity: 0 },
-    }).addTo(map.current)
-
-    districtLayerRef.current = leaflet.geoJSON(districtGeo as any, {
-      style: { color: "#111827", weight: 1.1, fillOpacity: 0, opacity: 0.85, dashArray: "3,4" },
-      onEachFeature: (feature: any, layer: any) => {
-        const distName = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || "District"
-        if (showDistrictLabels) layer.bindTooltip(distName, { permanent: true, direction: "center", className: "district-map-label" })
-      },
-    }).addTo(map.current)
+    const selectLayer = (layer: any, props: any, openPopup = false) => {
+      if (selectedLayerRef.current && selectedLayerRef.current !== layer) {
+        gridLayerRef.current?.resetStyle(selectedLayerRef.current)
+      }
+      selectedLayerRef.current = layer
+      selectedGridIdRef.current = props.grid_id
+      setSelectedGridInfo(props)
+      layer.setStyle(gridStyle(props, activeLayer, props.grid_id))
+      if (openPopup) layer.openPopup()
+    }
 
     gridLayerRef.current = leaflet.geoJSON(gridGeo as any, {
       renderer: leaflet.canvas({ padding: 0.35 }),
@@ -193,11 +171,10 @@ export default function MapPage() {
         layer.bindTooltip(`Grid ${props.grid_id}: ${percent(prob)}`, { sticky: true })
         layer.bindPopup(`
           <div style="font-family:Inter,sans-serif;min-width:220px;color:#0f2a3d">
-            <strong>Grid ${props.grid_id}</strong><br/>
-            <span style="color:#64748b">Area:</span> ${props.area_name || props.grid_code || "Grid cell"}<br/>
-            <span style="color:#64748b">District:</span> ${props.district_name || "Unknown"}<br/>
+            <strong>Grid: ${props.grid_id}</strong><br/>
+            <span style="color:#64748b">District:</span> <strong>${props.district_name || "Unknown"}</strong><br/>
             <span style="color:#64748b">Onset Probability:</span> ${percent(props.onset_probability)}<br/>
-            <span style="color:#64748b">False-Onset Probability:</span> ${percent(props.false_onset_probability)}<br/>
+            <span style="color:#64748b">False Onset Probability:</span> ${percent(props.false_onset_probability)}<br/>
             <span style="color:#64748b">Dry Spell Probability:</span> ${percent(props.dry_spell_probability)}
           </div>
         `)
@@ -205,17 +182,24 @@ export default function MapPage() {
           mouseover: (event: any) => { event.target.setStyle({ weight: 1.6, fillOpacity: 0.95 }) },
           mouseout: (event: any) => { gridLayerRef.current?.resetStyle(event.target) },
           click: () => {
-            if (selectedLayerRef.current && selectedLayerRef.current !== layer) {
-              gridLayerRef.current?.resetStyle(selectedLayerRef.current)
-            }
-            selectedLayerRef.current = layer
-            selectedGridIdRef.current = props.grid_id
-            layer.setStyle(gridStyle(props, activeLayer, props.grid_id))
-            setSelectedGrid(selectedLocationFromGrid(props as GridDiagnosticProperties))
-            setShowActiveGridPanel(true)
+            selectLayer(layer, props)
           },
         })
       },
+    }).addTo(map.current)
+
+    districtLayerRef.current = leaflet.geoJSON(districtGeo as any, {
+      style: { color: "#111827", weight: 1.1, fillOpacity: 0, opacity: 0.85, dashArray: "3,4" },
+      interactive: false,
+      onEachFeature: (feature: any, layer: any) => {
+        const distName = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || "District"
+        if (showDistrictLabels) layer.bindTooltip(distName, { permanent: true, direction: "center", className: "district-map-label" })
+      },
+    }).addTo(map.current)
+
+    countryLayerRef.current = leaflet.geoJSON(countryGeo as any, {
+      style: { color: "#0b3a4a", weight: 2.8, fillOpacity: 0 },
+      interactive: false,
     }).addTo(map.current)
 
     legendRef.current = (leaflet.control as any)({ position: "bottomleft" })
@@ -232,6 +216,82 @@ export default function MapPage() {
     }
     legendRef.current!.addTo(map.current)
   }, [isClient, leaflet, countryGeo, districtGeo, gridGeo, activeLayer, showDistrictLabels])
+
+  useEffect(() => {
+    if (searchText.trim().length < 2) {
+      setSearchResults([])
+      setSearchLoading(false)
+      searchAbortRef.current?.abort()
+      return
+    }
+
+    const controller = new AbortController()
+    searchAbortRef.current?.abort()
+    searchAbortRef.current = controller
+    const timer = window.setTimeout(async () => {
+      setSearchLoading(true)
+      try {
+        const response = await searchGridLocations(searchText, 8, controller.signal)
+        if (!controller.signal.aborted) setSearchResults(response.locations || [])
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false)
+      }
+    }, 300)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [searchText])
+
+  const selectSearchResult = (result: any) => {
+    setSearchText(result.location_name || "")
+    setSearchResults([])
+    const gridId = String(result.grid_id || "")
+    if (!gridId || !gridLayerRef.current || !map.current) return
+
+    let matchedLayer: any = null
+    gridLayerRef.current.eachLayer((layer: any) => {
+      if (String(layer.feature?.properties?.grid_id) === gridId) matchedLayer = layer
+    })
+
+    if (matchedLayer) {
+      const props = matchedLayer.feature.properties
+      if (selectedLayerRef.current && selectedLayerRef.current !== matchedLayer) {
+        gridLayerRef.current?.resetStyle(selectedLayerRef.current)
+      }
+      selectedLayerRef.current = matchedLayer
+      selectedGridIdRef.current = props.grid_id
+      setSelectedGridInfo({ ...props, area_name: result.location_name })
+      matchedLayer.setStyle(gridStyle(props, activeLayer, props.grid_id))
+      map.current.fitBounds(matchedLayer.getBounds(), { maxZoom: 11, padding: [28, 28] })
+      matchedLayer.openPopup()
+    } else if (result.latitude && result.longitude) {
+      map.current.setView([result.latitude, result.longitude], 11)
+    }
+  }
+
+  const beginPanelDrag = (event: any) => {
+    setDraggingPanel(true)
+    setDragOffset({ x: event.clientX - panelPosition.x, y: event.clientY - panelPosition.y })
+  }
+
+  useEffect(() => {
+    if (!draggingPanel) return
+    const onMove = (event: MouseEvent) => {
+      setPanelPosition({
+        x: Math.max(8, event.clientX - dragOffset.x),
+        y: Math.max(8, event.clientY - dragOffset.y),
+      })
+    }
+    const onUp = () => setDraggingPanel(false)
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [dragOffset.x, dragOffset.y, draggingPanel])
 
   return (
     <>
@@ -271,7 +331,36 @@ export default function MapPage() {
 
         <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
 
-        <div className="absolute left-5 top-5 z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+        <div className="absolute left-5 top-5 z-[820] w-[320px] max-w-[calc(100%-2.5rem)]">
+          <div className="flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
+            <Search className="h-4 w-4 text-[#64748b]" />
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Search district, TA, or area"
+              className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-[#0F2A3D] outline-none placeholder:text-[#94a3b8]"
+            />
+            {searchLoading && <Loader2 className="h-4 w-4 animate-spin text-[#64748b]" />}
+          </div>
+          {searchResults.length > 0 && (
+            <div className="mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white p-1.5 shadow-xl">
+              {searchResults.map((result, index) => (
+                <button
+                  key={`${result.grid_id}-${result.location_name}-${index}`}
+                  onClick={() => selectSearchResult(result)}
+                  className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[#f8fafc]"
+                >
+                  <span className="block text-[13px] font-bold text-[#0F2A3D]">{result.location_name}</span>
+                  <span className="block text-[11px] font-semibold text-[#64748b]">
+                    {result.place_type} - Grid {result.grid_id}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="absolute left-5 top-[4.9rem] z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
           {(Object.keys(LAYER_CONFIG) as DiagnosticLayer[]).map((layer) => (
             <button
               key={layer}
@@ -291,49 +380,47 @@ export default function MapPage() {
           {showDistrictLabels ? "Hide Names" : "Show Names"}
         </button>
 
+        {selectedGridInfo && (
+          <>
+            <button
+              onClick={() => setShowSelectedPanel((value) => !value)}
+              className="absolute right-16 top-16 z-[800] flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-lg"
+            >
+              {showSelectedPanel ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              {showSelectedPanel ? "Hide Grid" : "Show Grid"}
+            </button>
+            {showSelectedPanel && (
+              <div
+                className="absolute z-[810] w-[240px] rounded-xl border border-white/70 bg-white/95 p-3 shadow-xl backdrop-blur"
+                style={{ left: panelPosition.x, top: panelPosition.y }}
+              >
+                <button
+                  onMouseDown={beginPanelDrag}
+                  className="mb-2 flex w-full cursor-move items-center justify-between rounded-lg bg-[#f8fafc] px-2 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]"
+                >
+                  Active Grid
+                  <Move className="h-3.5 w-3.5" />
+                </button>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Grid Number</p>
+                    <p className="text-[16px] font-extrabold text-[#0F2A3D]">{selectedGridInfo.grid_id}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Selected/Search Area</p>
+                    <p className="text-[13px] font-bold text-[#0F2A3D]">{selectedGridInfo.area_name || selectedGridInfo.district_name || "Grid cell"}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
         <div className="absolute bottom-5 right-5 z-[800] flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg text-[12px] text-[#64748b]">
           <Database className="h-3.5 w-3.5" />
           {dbHealth ? `${dbHealth.grid_cell_count} grid cells indexed` : `${gridGeo?.features.length || 0} cells loaded`}
         </div>
 
-        {selectedGrid && (
-          <div className={`absolute bottom-5 left-5 z-[800] max-w-[calc(100%-2rem)] rounded-xl border border-white/70 bg-white/95 shadow-xl backdrop-blur ${showActiveGridPanel ? "w-[500px] p-4" : "w-auto p-2"}`}>
-            {!showActiveGridPanel ? (
-              <button onClick={() => setShowActiveGridPanel(true)} className="rounded-lg bg-[#0F2A3D] px-3 py-2 text-[12px] font-bold text-white">
-                Show Active Grid
-              </button>
-            ) : (
-              <>
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-[#64748b]">Active Grid Cell</p>
-                    <h2 className="mt-1 text-[20px] font-extrabold text-[#0F2A3D]">
-                      Grid {selectedGrid.grid} | {selectedGrid.areaName || "Selected Area"} | {selectedGrid.district}
-                    </h2>
-                    <p className="text-[13px] text-[#64748b]">
-                      Corresponding grid: {selectedGrid.grid} | {selectedGrid.gridData?.latitude.toFixed(4)}, {selectedGrid.gridData?.longitude.toFixed(4)}
-                    </p>
-                  </div>
-                  <button onClick={() => setShowActiveGridPanel(false)} className="rounded-md p-1 hover:bg-[#eef2f4]" aria-label="Hide active grid panel">
-                    <X className="h-4 w-4 text-[#64748b]" />
-                  </button>
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-3">
-                  {[
-                    ["Onset", percent(selectedGrid.gridData?.onset_probability)],
-                    ["False-Onset", percent(selectedGrid.gridData?.false_onset_probability)],
-                    ["Dry Spell", percent(selectedGrid.gridData?.dry_spell_probability)],
-                  ].map(([label, value]) => (
-                    <div key={label} className="rounded-lg border border-[#e2e8f0] bg-[#f8fafb] p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">{label}</p>
-                      <p className="mt-1 text-[15px] font-extrabold text-[#0F2A3D]">{value}</p>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
       </div>
     </>
   )

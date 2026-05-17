@@ -26,6 +26,15 @@ export interface AlgorithmSummary {
   highest_risk_cells: AlgorithmResult[]
 }
 
+export interface DashboardOverview {
+  grid_count: number
+  season_count: number
+  available_years: number[]
+  average_onset_probability: number
+  average_false_onset_probability: number
+  average_dry_spell_probability: number
+}
+
 export interface DistrictSummary {
   district: string
   shape_id?: string
@@ -90,12 +99,38 @@ export interface LocationSearchResult {
   latitude: number
   place_type: string | null
   population: string | null
+  onset_probability?: number | null
+  false_onset_probability?: number | null
+  dry_spell_probability?: number | null
+  seasons_analyzed?: number | null
+  seasons_with_detected_onset?: number | null
+  first_detected_onset_date?: string | null
+  latest_detected_onset_date?: string | null
+  overall_risk_level?: "Low" | "Medium" | "High" | null
 }
 
 export interface LocationSearchResponse {
   query: string
   match_count: number
   locations: LocationSearchResult[]
+}
+
+export interface OnsetTimelinePoint {
+  season: string
+  season_year: number | null
+  onset_date: string
+  onset_probability: number
+}
+
+export interface OnsetTimelineResponse {
+  grid_id: string
+  start_year: number | null
+  end_year: number | null
+  p10_onset_date: string | null
+  median_onset_date: string | null
+  p90_onset_date: string | null
+  trigger_count: number
+  series: OnsetTimelinePoint[]
 }
 
 export interface LocationHierarchyResponse {
@@ -257,6 +292,14 @@ const EMPTY_LOCATION_SEARCH = (query: string): LocationSearchResponse => ({
 })
 const EMPTY_LOCATION_HIERARCHY: LocationHierarchyResponse = { district_count: 0, districts: [] }
 const EMPTY_SEASON_YEARS: SeasonYearsResponse = { year_count: 0, available_years: [], ranges: [] }
+const EMPTY_DASHBOARD_OVERVIEW: DashboardOverview = {
+  grid_count: 0,
+  season_count: 0,
+  available_years: [],
+  average_onset_probability: 0,
+  average_false_onset_probability: 0,
+  average_dry_spell_probability: 0,
+}
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -402,6 +445,12 @@ export function fetchAlgorithmSummary() {
   )
 }
 
+export function fetchDashboardOverview() {
+  return apiFetch<DashboardOverview>("/api/dashboard/overview", {
+    fallback: EMPTY_DASHBOARD_OVERVIEW,
+  })
+}
+
 export function fetchDistrictSummary() {
   return apiFetch<DistrictSummaryResponse>('/api/results/district-summary', {
     fallback: EMPTY_DISTRICT_SUMMARY,
@@ -540,9 +589,41 @@ export function fetchGridHistory(gridId: string) {
   })
 }
 
+export function searchGridLocations(q: string, limit = 8, signal?: AbortSignal) {
+  const params = new URLSearchParams({
+    q,
+    limit: String(limit),
+  })
+
+  return apiFetch<LocationSearchResponse>(`/api/grid/search?${params.toString()}`, {
+    fallback: EMPTY_LOCATION_SEARCH(q),
+    signal,
+    timeoutMs: 8000,
+  })
+}
+
 export function fetchSeasonYears() {
   return apiFetch<SeasonYearsResponse>("/api/seasons/years", {
     fallback: EMPTY_SEASON_YEARS,
+  })
+}
+
+export function fetchOnsetTimeline(gridId: string, startYear?: number | null, endYear?: number | null) {
+  const qs = new URLSearchParams({ grid_id: gridId })
+  if (startYear) qs.set("start_year", String(startYear))
+  if (endYear) qs.set("end_year", String(endYear))
+
+  return apiFetch<OnsetTimelineResponse>(`/api/onset/timeline?${qs.toString()}`, {
+    fallback: {
+      grid_id: gridId,
+      start_year: startYear ?? null,
+      end_year: endYear ?? null,
+      p10_onset_date: null,
+      median_onset_date: null,
+      p90_onset_date: null,
+      trigger_count: 0,
+      series: [],
+    },
   })
 }
 

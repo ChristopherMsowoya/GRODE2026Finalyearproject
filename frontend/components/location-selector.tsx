@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { MapPin, ChevronDown, Search, Loader2, AlertCircle } from "lucide-react"
 import malawiAdminData from "@/lib/data/malawiAdministrativeData.json"
-import { fetchLocationHierarchy, fetchTaGrids, searchLocations } from "@/lib/algorithm-api"
+import { fetchLocationHierarchy, fetchTaGrids, searchGridLocations } from "@/lib/algorithm-api"
 
 interface TaOption {
   ta: string
@@ -324,7 +324,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       abortControllerRef.current = new AbortController()
       
       try {
-        const data = await searchLocations(query, 8, abortControllerRef.current.signal)
+        const data = await searchGridLocations(query, 8, abortControllerRef.current.signal)
         setGlobalResults(data.locations || [])
       } catch (e) {
         if (e instanceof Error && e.name !== "AbortError") {
@@ -341,7 +341,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     setSearchOpen(false)
     setGlobalResults([])
     
-    if (place.place_type === "Grid Cell") {
+    if (place.grid_id) {
       const gridSelection: SelectedLocation = {
         district: place.district || selectedDistrict,
         ta: place.traditional_authority || null,
@@ -352,15 +352,16 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           area_name: place.location_name,
           latitude: place.latitude,
           longitude: place.longitude,
-          overall_risk_level: "Low",
-          false_onset_probability: 0,
-          dry_spell_probability: 0,
-          seasons_analyzed: 0,
-          seasons_with_detected_onset: 0,
-          first_detected_onset_date: null,
-          latest_detected_onset_date: null,
-          false_onset_interpretation: "",
-          dry_spell_interpretation: "",
+          overall_risk_level: place.overall_risk_level || "Low",
+          false_onset_probability: place.false_onset_probability ?? 0,
+          dry_spell_probability: place.dry_spell_probability ?? 0,
+          onset_probability: place.onset_probability ?? 0,
+          seasons_analyzed: place.seasons_analyzed ?? 0,
+          seasons_with_detected_onset: place.seasons_with_detected_onset ?? 0,
+          first_detected_onset_date: place.first_detected_onset_date ?? null,
+          latest_detected_onset_date: place.latest_detected_onset_date ?? null,
+          false_onset_interpretation: place.false_onset_interpretation ?? "",
+          dry_spell_interpretation: place.dry_spell_interpretation ?? "",
         },
         areaName: place.location_name
       }
@@ -431,7 +432,12 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
         </div>
         {searchOpen && globalResults.length > 0 && (
           <div className="absolute top-full left-0 z-50 mt-1.5 w-72 max-h-60 overflow-y-auto rounded-2xl bg-white"
-               style={{ boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}>
+               style={{ boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+               onMouseDown={(e) => e.stopPropagation()}
+               onTouchStart={(e) => e.stopPropagation()}
+               onWheel={(e) => e.stopPropagation()}
+               onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-2 flex flex-col">
               {globalResults.map((r, idx) => (
                 <button
@@ -475,6 +481,10 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           <div
             className="absolute top-full left-0 z-50 mt-1.5 w-60 rounded-2xl overflow-hidden"
             style={{ background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Search */}
             <div className="p-2 border-b border-[#f0f4f8]">
@@ -533,6 +543,10 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           <div
             className="absolute top-full left-0 z-50 mt-1.5 w-64 rounded-2xl overflow-hidden"
             style={{ background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Search */}
             <div className="p-2 border-b border-[#f0f4f8]">
@@ -614,6 +628,10 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
             <div
               className="absolute top-full left-0 z-50 mt-1.5 w-64 rounded-2xl overflow-hidden"
               style={{ background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
+              onWheel={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               {/* Search */}
               <div className="p-2 border-b border-[#f0f4f8]">

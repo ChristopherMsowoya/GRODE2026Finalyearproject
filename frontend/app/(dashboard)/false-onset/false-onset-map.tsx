@@ -164,7 +164,8 @@ export default function FalseOnsetMap({
         const country = await fetchBoundaries("country", true)
         if (map.current && country && country.features && country.features.length) {
           const outline = L.geoJSON(country, {
-            style: { color: '#0b3a4a', weight: 2, fillOpacity: 0 }
+            interactive: false,
+            style: { color: '#0b3a4a', weight: 2.4, fillOpacity: 0 }
           }).addTo(map.current)
           districtLayers.current.set('country-outline', outline as any)
         }
@@ -173,10 +174,10 @@ export default function FalseOnsetMap({
         const districts = await fetchBoundaries("districts", true)
         if (map.current && districts && districts.features) {
           const districtLayer = L.geoJSON(districts, {
-            style: { color: '#111827', weight: 1.1, fillOpacity: 0, opacity: 0.8, dashArray: '3,4' },
+            interactive: false,
+            style: { color: '#111827', weight: 1.25, fillOpacity: 0, opacity: 0.95, dashArray: '3,4' },
             onEachFeature: (feature: any, layer: any) => {
               const distName = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || 'District'
-              layer.bindPopup(`<div style="font-family:Inter,sans-serif;font-size:13px;color:#0d2f3f;"><strong>${distName}</strong></div>`)
               if (showDistrictLabels) {
                 layer.bindTooltip(distName, {
                   permanent: true,
@@ -191,7 +192,7 @@ export default function FalseOnsetMap({
           const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
           if (!selectedLocation?.gridData) {
             const matchedFeature = districts.features.find((f: any) => {
-              const name = f.properties?.DISTRICT || f.properties?.name || ''
+              const name = f.properties?.DISTRICT || f.properties?.shapeName || f.properties?.name || ''
               return name.toLowerCase() === activeDistrict.toLowerCase()
             })
             if (matchedFeature) {
@@ -227,20 +228,18 @@ export default function FalseOnsetMap({
 
             featureLayer.bindTooltip(
               `<div style="font-family:Inter,sans-serif;font-size:12px;">
-                <strong style="color:#0d2f3f;">Grid ${gid}</strong><br/>
-                <span style="color:#6b7a8d;">False-Onset Prob:</span> ${probText}
+                <strong style="color:#0d2f3f;">Grid: ${gid}</strong><br/>
+                <span style="color:#6b7a8d;">False Onset Probability:</span> ${probText}
               </div>`,
               { direction: 'top', sticky: true }
             )
 
             featureLayer.bindPopup(
               `<div style="font-family:Inter,sans-serif;font-size:13px;color:#0d2f3f;">
-                <strong>Grid ${gid}</strong><br/>
+                <strong>Grid: ${gid}</strong><br/>
                 <span style="color:#6b7a8d;font-size:12px;">
-                  District: ${props.district_name || '–'}<br/>
-                  False-Onset Prob: <strong>${probText}</strong><br/>
-                  Onset Prob: <strong>${typeof props.onset_probability === 'number' ? (props.onset_probability * 100).toFixed(1) : '–'}%</strong><br/>
-                  Dry Spell Prob: <strong>${typeof props.dry_spell_probability === 'number' ? (props.dry_spell_probability * 100).toFixed(1) : '–'}%</strong>
+                  District: <strong>${props.district_name || 'Unknown'}</strong><br/>
+                  False Onset Probability: <strong>${probText}</strong>
                 </span>
               </div>`
             )
@@ -272,13 +271,19 @@ export default function FalseOnsetMap({
             })
 
             featureLayer.on('mouseover', function (this: any) { this.setStyle({ weight: 1.5, fillOpacity: 0.95 }) })
-            featureLayer.on('mouseout', function (this: any) { this.setStyle({ weight: 0.35, fillOpacity: 0.72 }) })
+            featureLayer.on('mouseout', function (this: any) { boundsGeojsonRef.current?.resetStyle(this) })
 
             districtLayers.current.set(gid, featureLayer)
           }
         }).addTo(map.current)
 
         boundsGeojsonRef.current = gridLayer
+
+        const outline = districtLayers.current.get('country-outline') as any
+        if (outline) outline.bringToFront()
+
+        const dOverlay = districtLayers.current.get('districts-overlay') as any
+        if (dOverlay) dOverlay.bringToFront()
       } catch (err) {
         // fallback: do nothing
       }

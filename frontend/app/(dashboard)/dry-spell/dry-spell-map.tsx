@@ -20,16 +20,16 @@ interface DrySpellMapProps {
 }
 
 const LEGEND = [
-  { min: 0, max: 20, label: "Very Low", color: "#dbeafe" },
-  { min: 21, max: 40, label: "Low", color: "#93c5fd" },
-  { min: 41, max: 60, label: "Moderate", color: "#facc15" },
-  { min: 61, max: 80, label: "High", color: "#fb923c" },
-  { min: 81, max: 100, label: "Very High", color: "#dc2626" },
+  { min: 0, max: 30, label: "Low risk", color: "#1F7A63" },
+  { min: 31, max: 60, label: "Moderate risk", color: "#facc15" },
+  { min: 61, max: 100, label: "High risk", color: "#e36a6a" },
 ]
 
 function colorFor(probability = 0) {
   const pct = Math.max(0, Math.min(100, probability * 100))
-  return LEGEND.find((bin) => pct >= bin.min && pct <= bin.max)?.color ?? LEGEND[0].color
+  if (pct > 60) return "#e36a6a"
+  if (pct > 30) return "#facc15"
+  return "#1F7A63"
 }
 
 function percent(value?: number | null) {
@@ -151,9 +151,10 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
       ])
       if (!map.current) return
 
-      const countryLayer = L.geoJSON(country as any, { style: { color: "#0b3a4a", weight: 2.4, fillOpacity: 0 } }).addTo(map.current)
+      const countryLayer = L.geoJSON(country as any, { interactive: false, style: { color: "#0b3a4a", weight: 2.4, fillOpacity: 0 } }).addTo(map.current)
       const districtLayer = L.geoJSON(districts as any, {
-        style: { color: "#111827", weight: 1.1, fillOpacity: 0, opacity: 0.8, dashArray: "3,4" },
+        interactive: false,
+        style: { color: "#111827", weight: 1.25, fillOpacity: 0, opacity: 0.95, dashArray: "3,4" },
         onEachFeature: (feature: any, layer: any) => {
           if (!showDistrictLabels) return
           const name = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || "District"
@@ -168,7 +169,7 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
 
       const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
       const matchedFeature = (districts as any).features?.find((f: any) => {
-        const name = f.properties?.DISTRICT || f.properties?.name || ''
+        const name = f.properties?.DISTRICT || f.properties?.shapeName || f.properties?.name || ''
         return name.toLowerCase() === activeDistrict.toLowerCase()
       })
 
@@ -197,13 +198,12 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
           const gid = props.grid_id || "-"
           layer.bindTooltip(`Grid ${gid}: ${percent(props.dry_spell_probability)}`, { sticky: true })
           layer.bindPopup(`
-            <div style="font-family:Inter,sans-serif;color:#0d2f3f;min-width:220px;">
-              <strong>Grid ${gid}</strong><br/>
-              <span style="color:#64748b;">District:</span> ${props.district_name || "Unknown"}<br/>
-              <span style="color:#64748b;">Onset Probability:</span> ${percent(props.onset_probability)}<br/>
-              <span style="color:#64748b;">False-Onset Probability:</span> ${percent(props.false_onset_probability)}<br/>
-              <span style="color:#64748b;">Dry Spell Probability:</span> <strong>${percent(props.dry_spell_probability)}</strong><br/>
-              <span style="color:#64748b;">Season Summary:</span> ${props.seasons_analyzed ?? 0} seasons
+            <div style="font-family:Inter,sans-serif;color:#0d2f3f;min-width:220px;font-size:13px;">
+              <strong>Grid: ${gid}</strong><br/>
+              <span style="color:#6b7a8d;font-size:12px;">
+                District: <strong>${props.district_name || "Unknown"}</strong><br/>
+                Dry Spell Probability: <strong>${percent(props.dry_spell_probability)}</strong>
+              </span>
             </div>
           `)
           layer.on("click", () => onLocationChange(toSelectedLocation(props)))
@@ -212,6 +212,8 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
         },
       }).addTo(map.current)
 
+      districtLayer.bringToFront()
+      countryLayer.bringToFront()
     }
 
     void draw()

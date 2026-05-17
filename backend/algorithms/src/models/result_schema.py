@@ -12,6 +12,7 @@ def build_result(
     false_prob,
     stress_prob,
     season_diagnostics=None,
+    onset_timeline=None,
 ):
     max_risk = max(false_prob, stress_prob)
     onset_probability = (
@@ -32,6 +33,7 @@ def build_result(
         "false_onset_probability": round(false_prob, 3),
         "dry_spell_probability": round(stress_prob, 3),
         "season_diagnostics": season_diagnostics or [],
+        "onset_timeline": onset_timeline or {},
         "overall_risk_level": classify_risk(max_risk),
         "false_onset_interpretation": describe_probability(
             false_prob,

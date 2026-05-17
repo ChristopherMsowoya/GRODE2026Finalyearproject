@@ -5,7 +5,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { useState, useEffect } from "react"
 import { useUser } from "@/lib/user-context"
-import { fetchDistrictSummary, type DistrictSummary } from "@/lib/algorithm-api"
+import { fetchDashboardOverview, fetchDistrictSummary, type DashboardOverview, type DistrictSummary } from "@/lib/algorithm-api"
 
 function SunRingIcon() {
   return (
@@ -178,14 +178,16 @@ function GuidanceSlideshow() {
 export default function DashboardPage() {
   const { user } = useUser()
   const [liveDistrictData, setLiveDistrictData] = useState<DistrictSummary[]>([])
+  const [overview, setOverview] = useState<DashboardOverview | null>(null)
   const [liveStatus, setLiveStatus] = useState<"loading" | "live" | "error">("loading")
 
   useEffect(() => {
     let cancelled = false;
     async function loadData() {
       try {
-        const res = await fetchDistrictSummary()
+        const [res, overviewRes] = await Promise.all([fetchDistrictSummary(), fetchDashboardOverview()])
         if (cancelled) return
+        setOverview(overviewRes)
         if ((res as any).pipeline_status === "not_run" || res.districts.length === 0) {
           setLiveStatus("error")
           return
@@ -208,7 +210,11 @@ export default function DashboardPage() {
   const effectiveRiskData = districtRiskData
   const displayLabel = activeDistrict
 
-  const foProb = effectiveRiskData ? (effectiveRiskData.average_false_onset_probability || 0) : 0.90
+  const onsetProb = overview?.average_onset_probability ?? (effectiveRiskData?.onset_detection_rate || 0)
+  const onsetPercent = `${(onsetProb * 100).toFixed(0)}%`
+  const onsetStatus = onsetProb > 0.6 ? "Detected" : onsetProb > 0.3 ? "Emerging" : "Not Started"
+  const onsetColor = onsetProb > 0.6 ? "#1F7A63" : onsetProb > 0.3 ? "#F4A261" : "#D64545"
+  const foProb = overview?.average_false_onset_probability ?? (effectiveRiskData?.average_false_onset_probability || 0)
   const foLevel = foProb > 0.6 ? "HIGH" : foProb > 0.3 ? "MED" : "LOW"
   const foColor = foProb > 0.6 ? "#D64545" : foProb > 0.3 ? "#F4A261" : "#1F7A63"
   const foPercent = (foProb * 100).toFixed(0) + "%"
@@ -220,7 +226,7 @@ export default function DashboardPage() {
     foMessage = `There is a moderate ${foPercent} probability of intermittent dry spells. Farmers should ensure resilient crop varieties or supplementary water availability.`
   }
 
-  const csProb = effectiveRiskData ? (effectiveRiskData.average_dry_spell_probability || 0) : 0.45
+  const csProb = overview?.average_dry_spell_probability ?? (effectiveRiskData?.average_dry_spell_probability || 0)
   const csLevel = csProb > 0.6 ? "HIGH" : csProb > 0.3 ? "MED" : "LOW"
   const csColor = csProb > 0.6 ? "#D64545" : csProb > 0.3 ? "#F4A261" : "#1F7A63"
 
@@ -303,11 +309,11 @@ export default function DashboardPage() {
         </div>
         <span className="opacity-40">|</span>
         <span>
-          <strong className="text-[#0F2A3D]">{effectiveRiskData?.grid_cell_count || 128}</strong> Grids Analyzed
+          <strong className="text-[#0F2A3D]">{overview?.grid_count || effectiveRiskData?.grid_cell_count || 0}</strong> Grids Analyzed
         </span>
         <span className="opacity-40">|</span>
         <span>
-          <strong className="text-[#0F2A3D]">{effectiveRiskData?.seasons_analyzed || 4}</strong> Seasons Validated
+          <strong className="text-[#0F2A3D]">{overview?.season_count || effectiveRiskData?.seasons_analyzed || 0}</strong> Seasons Validated
         </span>
       </div>
 
@@ -340,14 +346,13 @@ export default function DashboardPage() {
             {/* Status badge */}
             <span
               className="inline-block rounded-full px-4 py-1.5 text-[13px] font-bold"
-              style={{ color: "#D64545", background: "rgba(214,69,69,0.08)", border: "1.5px solid rgba(214,69,69,0.25)" }}
+              style={{ color: onsetColor, background: `${onsetColor}14`, border: `1.5px solid ${onsetColor}40` }}
             >
-              Not Started
+              {onsetStatus} ({onsetPercent})
             </span>
 
             <p className="text-center text-[13px] leading-[1.6] text-[#6b7a8d]">
-              The main rains have not consistently begun. Scattered showers are expected but do
-              not signal the season start.
+              Average true-onset detection across all loaded grid-cell seasons from CHIRPS-derived diagnostics.
             </p>
           </div>
         </div>

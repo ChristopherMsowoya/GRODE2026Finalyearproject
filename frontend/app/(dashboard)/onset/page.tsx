@@ -7,6 +7,7 @@ import type { DistrictSummary } from "@/lib/algorithm-api"
 import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 import GridGraph from "@/components/grid-graph"
 import GridDiagnosticWidget from "@/components/grid-diagnostic-widget"
+import SeasonalOnsetTimeline from "@/components/seasonal-onset-timeline"
 import dynamic from "next/dynamic"
 
 const OnsetMap = dynamic(() => import("./onset-map"), { ssr: false })
@@ -80,6 +81,7 @@ export default function OnsetInfoPage() {
               onDistrictDataLoad={() => {}}
             />
           </div>
+          <SeasonalOnsetTimeline location={selectedLocation} />
           <GridGraph location={selectedLocation} metricType="onset" />
         </div>
 

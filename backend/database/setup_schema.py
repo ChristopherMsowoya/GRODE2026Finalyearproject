@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS seasonal_onset (
     onset_date                  DATE,
     onset_day_of_year           INTEGER,
     onset_valid                 BOOLEAN NOT NULL DEFAULT FALSE,
+    onset_probability           DOUBLE PRECISION,
     trigger_rainfall_mm         DOUBLE PRECISION,
     persistence_passed          BOOLEAN,
     -- climatology aggregates (populated by ingest script)

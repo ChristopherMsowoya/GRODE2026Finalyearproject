@@ -35,6 +35,11 @@ export default function GridDiagnosticWidget({
           </span>
         )}
       </div>
+      {metricLabel === "Onset Probability" && (
+        <p className="mb-4 rounded-[14px] border border-[#dceee8] bg-[#f3faf7] p-3 text-[12px] font-medium leading-relaxed text-[#315f52]">
+          Onset probability represents the likelihood that effective rainfall onset conditions have been detected within this grid cell during the selected rainy season.
+        </p>
+      )}
       <div className="space-y-3">
         {[
           ["Selected Area", selectedLocation?.areaName || selectedLocation?.ta || selectedLocation?.district || defaultDistrict],

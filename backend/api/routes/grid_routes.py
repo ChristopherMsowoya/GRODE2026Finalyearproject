@@ -46,6 +46,14 @@ def _load_local_results_cached(_mtime_ns: int) -> list[dict]:
         rows = json.load(results_file)
 
     normalized = []
+    
+    # Pre-load districts for spatial join
+    try:
+        from backend.api.spatial import DISTRICTS_GEOJSON_PATH, load_geojson_features, bbox_contains, point_in_geometry
+        districts = load_geojson_features(str(DISTRICTS_GEOJSON_PATH))
+    except Exception:
+        districts = []
+
     for row in rows:
         result = dict(row)
         if "dry_spell_probability" not in result:
@@ -54,6 +62,19 @@ def _load_local_results_cached(_mtime_ns: int) -> list[dict]:
             result["dry_spell_interpretation"] = result.get(LEGACY_DRY_INTERPRETATION_KEY)
         result.pop(LEGACY_DRY_PROBABILITY_KEY, None)
         result.pop(LEGACY_DRY_INTERPRETATION_KEY, None)
+        
+        # Spatial Join for District Name
+        lon = float(result.get("longitude") or result.get("centroid_lon") or 0)
+        lat = float(result.get("latitude") or result.get("centroid_lat") or 0)
+        district_name = None
+        for d in districts:
+            if bbox_contains(d["_bbox"], lon, lat) and point_in_geometry(lon, lat, d["geometry"]):
+                district_name = d["properties"].get("shapeName") or d["properties"].get("DISTRICT") or "Unknown"
+                break
+        if districts and not district_name:
+            continue
+        result["district_name"] = district_name
+        
         normalized.append(result)
 
     return normalized
