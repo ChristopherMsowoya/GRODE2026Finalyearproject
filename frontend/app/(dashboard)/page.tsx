@@ -91,7 +91,7 @@ export default function DashboardPage() {
               Open Onset Analytics
             </Link>
             <Link
-              href="/map/full"
+              href="/map"
               className="inline-flex items-center gap-2 rounded-md border border-[#d6dee8] bg-white px-4 py-2.5 text-[13px] font-bold text-[#0F2A3D] transition hover:bg-[#f8fafc]"
             >
               <MapPinned className="h-4 w-4" />
@@ -137,16 +137,9 @@ export default function DashboardPage() {
       </section>
 
       <section className="rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3">
           <div>
             <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">System State</p>
-            <p className="mt-1 text-[15px] font-semibold text-[#0F2A3D]">
-              {liveStatus === "live"
-                ? "FastAPI and grid diagnostics are responding with live local results."
-                : liveStatus === "loading"
-                  ? "Checking algorithm availability..."
-                  : "Algorithm data is not currently available."}
-            </p>
           </div>
           <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-1.5 text-[12px] font-bold text-[#166534]">
             <span className={`h-2 w-2 rounded-full ${liveStatus === "live" ? "animate-pulse bg-[#22c55e]" : "bg-[#94a3b8]"}`} />

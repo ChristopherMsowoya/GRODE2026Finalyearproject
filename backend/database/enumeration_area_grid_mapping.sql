@@ -3,21 +3,25 @@
 -- the INSERT query to create scientifically valid area-to-grid relationships.
 
 CREATE TABLE IF NOT EXISTS enumeration_areas (
-    enumeration_area_id TEXT PRIMARY KEY,
-    enumeration_area_name TEXT NOT NULL,
-    district TEXT NOT NULL,
+    id TEXT PRIMARY KEY,
+    district_name TEXT NOT NULL,
+    ta_name TEXT,
+    ea_name TEXT NOT NULL,
     source_dataset TEXT,
-    geom geometry(MultiPolygon, 4326) NOT NULL
+    geometry geometry(MultiPolygon, 4326) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_enumeration_areas_geom
-    ON enumeration_areas USING GIST (geom);
+    ON enumeration_areas USING GIST (geometry);
 
 CREATE INDEX IF NOT EXISTS idx_enumeration_areas_district
-    ON enumeration_areas (district);
+    ON enumeration_areas (district_name);
+
+CREATE INDEX IF NOT EXISTS idx_enumeration_areas_ta
+    ON enumeration_areas (ta_name);
 
 CREATE TABLE IF NOT EXISTS enumeration_area_grid_intersections (
-    enumeration_area_id TEXT NOT NULL REFERENCES enumeration_areas(enumeration_area_id) ON DELETE CASCADE,
+    enumeration_area_id TEXT NOT NULL REFERENCES enumeration_areas(id) ON DELETE CASCADE,
     grid_id TEXT NOT NULL REFERENCES grid_cells(grid_id) ON DELETE CASCADE,
     overlap_area_km2 DOUBLE PRECISION NOT NULL,
     overlap_fraction DOUBLE PRECISION NOT NULL,
@@ -42,13 +46,13 @@ INSERT INTO enumeration_area_grid_intersections (
     contains_centroid
 )
 SELECT
-    ea.enumeration_area_id,
+    ea.id,
     gc.grid_id,
-    ST_Area(ST_Intersection(ea.geom::geography, gc.geom::geography)) / 1000000.0 AS overlap_area_km2,
-    ST_Area(ST_Intersection(ea.geom::geography, gc.geom::geography))
-        / NULLIF(ST_Area(ea.geom::geography), 0) AS overlap_fraction,
-    ST_Contains(gc.geom, ST_PointOnSurface(ea.geom)) AS contains_centroid
+    ST_Area(ST_Intersection(ea.geometry::geography, gc.geom::geography)) / 1000000.0 AS overlap_area_km2,
+    ST_Area(ST_Intersection(ea.geometry::geography, gc.geom::geography))
+        / NULLIF(ST_Area(ea.geometry::geography), 0) AS overlap_fraction,
+    ST_Contains(gc.geom, ST_PointOnSurface(ea.geometry)) AS contains_centroid
 FROM enumeration_areas ea
 JOIN grid_cells gc
-    ON ST_Intersects(ea.geom, gc.geom)
-WHERE NOT ST_IsEmpty(ST_Intersection(ea.geom, gc.geom));
+    ON ST_Intersects(ea.geometry, gc.geom)
+WHERE NOT ST_IsEmpty(ST_Intersection(ea.geometry, gc.geom));

@@ -2,17 +2,17 @@
 
 import { useEffect, useRef, useState } from "react"
 import "leaflet/dist/leaflet.css"
-import { Database, Eye, EyeOff, Loader2, Move, Search } from "lucide-react"
+import { Database, Eye, EyeOff, Loader2, Move } from "lucide-react"
 import {
   fetchBoundaries,
   fetchDatabaseHealth,
   fetchGridDiagnostics,
-  searchGridLocations,
   type DatabaseHealthResponse,
   type DiagnosticLayer,
   type GeoJsonFeatureCollection,
   type GridDiagnosticProperties,
 } from "@/lib/algorithm-api"
+import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 
 const LAYER_CONFIG: Record<DiagnosticLayer, { label: string; shortLabel: string; color: string }> = {
   onset: { label: "Onset Probability", shortLabel: "Onset", color: "#1F7A63" },
@@ -61,7 +61,6 @@ export default function MapPage() {
   const legendRef = useRef<any>(null)
   const selectedLayerRef = useRef<any>(null)
   const selectedGridIdRef = useRef<string | null>(null)
-  const searchAbortRef = useRef<AbortController | null>(null)
   const [leaflet, setLeaflet] = useState<any>(null)
 
   const [activeLayer, setActiveLayer] = useState<DiagnosticLayer>("onset")
@@ -79,9 +78,7 @@ export default function MapPage() {
   const [panelPosition, setPanelPosition] = useState({ x: 20, y: 92 })
   const [draggingPanel, setDraggingPanel] = useState(false)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const [searchText, setSearchText] = useState("")
-  const [searchResults, setSearchResults] = useState<any[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
 
   useEffect(() => { setIsClient(true) }, [])
 
@@ -218,36 +215,7 @@ export default function MapPage() {
   }, [isClient, leaflet, countryGeo, districtGeo, gridGeo, activeLayer, showDistrictLabels])
 
   useEffect(() => {
-    if (searchText.trim().length < 2) {
-      setSearchResults([])
-      setSearchLoading(false)
-      searchAbortRef.current?.abort()
-      return
-    }
-
-    const controller = new AbortController()
-    searchAbortRef.current?.abort()
-    searchAbortRef.current = controller
-    const timer = window.setTimeout(async () => {
-      setSearchLoading(true)
-      try {
-        const response = await searchGridLocations(searchText, 8, controller.signal)
-        if (!controller.signal.aborted) setSearchResults(response.locations || [])
-      } finally {
-        if (!controller.signal.aborted) setSearchLoading(false)
-      }
-    }, 300)
-
-    return () => {
-      window.clearTimeout(timer)
-      controller.abort()
-    }
-  }, [searchText])
-
-  const selectSearchResult = (result: any) => {
-    setSearchText(result.location_name || "")
-    setSearchResults([])
-    const gridId = String(result.grid_id || "")
+    const gridId = String(selectedLocation?.grid || "")
     if (!gridId || !gridLayerRef.current || !map.current) return
 
     let matchedLayer: any = null
@@ -262,14 +230,14 @@ export default function MapPage() {
       }
       selectedLayerRef.current = matchedLayer
       selectedGridIdRef.current = props.grid_id
-      setSelectedGridInfo({ ...props, area_name: result.location_name })
+      setSelectedGridInfo({ ...props, area_name: selectedLocation?.areaName || props.area_name })
       matchedLayer.setStyle(gridStyle(props, activeLayer, props.grid_id))
       map.current.fitBounds(matchedLayer.getBounds(), { maxZoom: 11, padding: [28, 28] })
       matchedLayer.openPopup()
-    } else if (result.latitude && result.longitude) {
-      map.current.setView([result.latitude, result.longitude], 11)
+    } else if (selectedLocation?.gridData?.latitude && selectedLocation?.gridData?.longitude) {
+      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 11)
     }
-  }
+  }, [activeLayer, selectedLocation])
 
   const beginPanelDrag = (event: any) => {
     setDraggingPanel(true)
@@ -331,36 +299,11 @@ export default function MapPage() {
 
         <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
 
-        <div className="absolute left-5 top-5 z-[820] w-[320px] max-w-[calc(100%-2.5rem)]">
-          <div className="flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg backdrop-blur">
-            <Search className="h-4 w-4 text-[#64748b]" />
-            <input
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Search district, TA, or area"
-              className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-[#0F2A3D] outline-none placeholder:text-[#94a3b8]"
-            />
-            {searchLoading && <Loader2 className="h-4 w-4 animate-spin text-[#64748b]" />}
-          </div>
-          {searchResults.length > 0 && (
-            <div className="mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-[#e2e8f0] bg-white p-1.5 shadow-xl">
-              {searchResults.map((result, index) => (
-                <button
-                  key={`${result.grid_id}-${result.location_name}-${index}`}
-                  onClick={() => selectSearchResult(result)}
-                  className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[#f8fafc]"
-                >
-                  <span className="block text-[13px] font-bold text-[#0F2A3D]">{result.location_name}</span>
-                  <span className="block text-[11px] font-semibold text-[#64748b]">
-                    {result.place_type} - Grid {result.grid_id}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
+        <div className="absolute left-5 top-5 z-[820] max-w-[calc(100%-2.5rem)] rounded-xl border border-white/70 bg-white/95 p-3 shadow-lg backdrop-blur">
+          <LocationSelector onLocationChange={setSelectedLocation} />
         </div>
 
-        <div className="absolute left-5 top-[4.9rem] z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+        <div className="absolute left-5 top-[7rem] z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
           {(Object.keys(LAYER_CONFIG) as DiagnosticLayer[]).map((layer) => (
             <button
               key={layer}

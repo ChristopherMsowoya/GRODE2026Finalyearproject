@@ -635,15 +635,15 @@ def get_enumeration_area_hierarchy():
         rows = fetch_all(
             """
             select
-                ea.district,
-                ea.enumeration_area_id,
-                ea.enumeration_area_name,
+                ea.district_name,
+                ea.id as enumeration_area_id,
+                ea.ea_name as enumeration_area_name,
                 count(eagi.grid_id) as grid_cell_count
             from enumeration_areas ea
             left join enumeration_area_grid_intersections eagi
-                on eagi.enumeration_area_id = ea.enumeration_area_id
-            group by ea.district, ea.enumeration_area_id, ea.enumeration_area_name
-            order by ea.district, ea.enumeration_area_name
+                on eagi.enumeration_area_id = ea.id
+            group by ea.district_name, ea.id, ea.ea_name
+            order by ea.district_name, ea.ea_name
             """
         )
     except Exception:
@@ -656,7 +656,7 @@ def get_enumeration_area_hierarchy():
 
     district_map: dict[str, list[dict]] = {}
     for row in rows:
-        district_map.setdefault(row["district"], []).append({
+        district_map.setdefault(row["district_name"], []).append({
             "enumeration_area_id": row["enumeration_area_id"],
             "enumeration_area_name": row["enumeration_area_name"],
             "grid_cell_count": row["grid_cell_count"],
@@ -676,6 +676,99 @@ def get_enumeration_area_hierarchy():
     }
 
 
+@app.get("/api/locations/districts")
+def get_location_districts():
+    """Return districts for the EA selector. Falls back to local grid coverage."""
+    try:
+        from backend.database.connection import fetch_all
+
+        rows = fetch_all(
+            """
+            select district_name as district, count(*) as enumeration_area_count
+            from enumeration_areas
+            group by district_name
+            order by district_name
+            """
+        )
+        if rows:
+            return {"available": True, "district_count": len(rows), "districts": rows}
+    except Exception:
+        pass
+
+    districts = [
+        {"district": row["district"], "enumeration_area_count": 0}
+        for row in build_district_summaries()
+        if row.get("district") and row["district"] != "Unknown"
+    ]
+    return {
+        "available": False,
+        "district_count": len(districts),
+        "districts": districts,
+        "detail": "Enumeration areas are not loaded yet; district list is from grid coverage.",
+    }
+
+
+@app.get("/api/locations/enumeration-areas")
+def get_enumeration_areas_by_district(district: str = Query(...)):
+    """Return enumeration areas for a district, including their primary mapped grid."""
+    try:
+        from backend.database.connection import fetch_all
+
+        rows = fetch_all(
+            """
+            select
+                ea.id,
+                ea.ea_name,
+                ea.ta_name,
+                ea.district_name,
+                primary_grid.grid_id,
+                primary_grid.overlap_fraction,
+                primary_grid.contains_centroid,
+                count(eagi.grid_id) as intersecting_grid_count
+            from enumeration_areas ea
+            left join lateral (
+                select grid_id, overlap_fraction, contains_centroid
+                from enumeration_area_grid_intersections eagi2
+                where eagi2.enumeration_area_id = ea.id
+                order by contains_centroid desc, overlap_fraction desc
+                limit 1
+            ) primary_grid on true
+            left join enumeration_area_grid_intersections eagi
+                on eagi.enumeration_area_id = ea.id
+            where lower(ea.district_name) = lower(%(district)s)
+            group by ea.id, ea.ea_name, ea.ta_name, ea.district_name,
+                     primary_grid.grid_id, primary_grid.overlap_fraction, primary_grid.contains_centroid
+            order by ea.ea_name
+            """,
+            {"district": district},
+        )
+    except Exception:
+        return {
+            "available": False,
+            "district": district,
+            "enumeration_area_count": 0,
+            "enumeration_areas": [],
+            "detail": "Enumeration-area geometry has not been loaded.",
+        }
+
+    results = normalize_results(load_results())
+    by_grid = {str(row.get("grid_id")): row for row in results}
+    areas = []
+    for row in rows:
+        diagnostic = by_grid.get(str(row.get("grid_id"))) if row.get("grid_id") else None
+        areas.append({
+            **row,
+            "grid": diagnostic,
+        })
+
+    return {
+        "available": True,
+        "district": district,
+        "enumeration_area_count": len(areas),
+        "enumeration_areas": areas,
+    }
+
+
 @app.get("/api/locations/enumeration-area-grids")
 def get_enumeration_area_grids(enumeration_area_id: str = Query(...)):
     """Return grid diagnostics intersecting a real enumeration area."""
@@ -685,16 +778,17 @@ def get_enumeration_area_grids(enumeration_area_id: str = Query(...)):
         rows = fetch_all(
             """
             select
-                ea.enumeration_area_id,
-                ea.enumeration_area_name,
-                ea.district,
+                ea.id as enumeration_area_id,
+                ea.ea_name as enumeration_area_name,
+                ea.district_name as district,
+                ea.ta_name,
                 eagi.grid_id,
                 eagi.overlap_area_km2,
                 eagi.overlap_fraction,
                 eagi.contains_centroid
             from enumeration_area_grid_intersections eagi
             join enumeration_areas ea
-                on ea.enumeration_area_id = eagi.enumeration_area_id
+                on ea.id = eagi.enumeration_area_id
             where eagi.enumeration_area_id = %(enumeration_area_id)s
             order by eagi.contains_centroid desc, eagi.overlap_fraction desc
             """,

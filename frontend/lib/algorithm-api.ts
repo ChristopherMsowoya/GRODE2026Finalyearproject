@@ -148,6 +148,36 @@ export interface LocationHierarchyResponse {
   }>
 }
 
+export interface LocationDistrictsResponse {
+  available: boolean
+  district_count: number
+  districts: Array<{
+    district: string
+    enumeration_area_count: number
+  }>
+  detail?: string
+}
+
+export interface EnumerationAreaOption {
+  id: string
+  ea_name: string
+  ta_name: string | null
+  district_name: string
+  grid_id: string | null
+  overlap_fraction: number | null
+  contains_centroid: boolean | null
+  intersecting_grid_count: number
+  grid?: Record<string, unknown> | null
+}
+
+export interface EnumerationAreasResponse {
+  available: boolean
+  district: string
+  enumeration_area_count: number
+  enumeration_areas: EnumerationAreaOption[]
+  detail?: string
+}
+
 export interface TaGridsResponse {
   grid_count: number
   traditional_authority: string
@@ -291,6 +321,13 @@ const EMPTY_LOCATION_SEARCH = (query: string): LocationSearchResponse => ({
   locations: [],
 })
 const EMPTY_LOCATION_HIERARCHY: LocationHierarchyResponse = { district_count: 0, districts: [] }
+const EMPTY_LOCATION_DISTRICTS: LocationDistrictsResponse = { available: false, district_count: 0, districts: [] }
+const EMPTY_ENUMERATION_AREAS = (district: string): EnumerationAreasResponse => ({
+  available: false,
+  district,
+  enumeration_area_count: 0,
+  enumeration_areas: [],
+})
 const EMPTY_SEASON_YEARS: SeasonYearsResponse = { year_count: 0, available_years: [], ranges: [] }
 const EMPTY_DASHBOARD_OVERVIEW: DashboardOverview = {
   grid_count: 0,
@@ -499,6 +536,21 @@ export function searchLocations(name: string, limit = 10, signal?: AbortSignal) 
 export function fetchLocationHierarchy(signal?: AbortSignal) {
   return apiFetch<LocationHierarchyResponse>("/api/locations/hierarchy", {
     fallback: EMPTY_LOCATION_HIERARCHY,
+    signal,
+  })
+}
+
+export function fetchLocationDistricts(signal?: AbortSignal) {
+  return apiFetch<LocationDistrictsResponse>("/api/locations/districts", {
+    fallback: EMPTY_LOCATION_DISTRICTS,
+    signal,
+  })
+}
+
+export function fetchEnumerationAreas(district: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ district })
+  return apiFetch<EnumerationAreasResponse>(`/api/locations/enumeration-areas?${params.toString()}`, {
+    fallback: EMPTY_ENUMERATION_AREAS(district),
     signal,
   })
 }
