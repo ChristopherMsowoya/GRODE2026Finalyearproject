@@ -626,6 +626,104 @@ def get_location_hierarchy():
     return {"district_count": len(hierarchy), "districts": hierarchy}
 
 
+@app.get("/api/locations/enumeration-area-hierarchy")
+def get_enumeration_area_hierarchy():
+    """Return District -> Enumeration Area hierarchy when EA geometries are loaded."""
+    try:
+        from backend.database.connection import fetch_all
+
+        rows = fetch_all(
+            """
+            select
+                ea.district,
+                ea.enumeration_area_id,
+                ea.enumeration_area_name,
+                count(eagi.grid_id) as grid_cell_count
+            from enumeration_areas ea
+            left join enumeration_area_grid_intersections eagi
+                on eagi.enumeration_area_id = ea.enumeration_area_id
+            group by ea.district, ea.enumeration_area_id, ea.enumeration_area_name
+            order by ea.district, ea.enumeration_area_name
+            """
+        )
+    except Exception:
+        return {
+            "available": False,
+            "district_count": 0,
+            "districts": [],
+            "detail": "Enumeration-area geometry has not been loaded. Run backend/database/enumeration_area_grid_mapping.sql after importing real EA polygons.",
+        }
+
+    district_map: dict[str, list[dict]] = {}
+    for row in rows:
+        district_map.setdefault(row["district"], []).append({
+            "enumeration_area_id": row["enumeration_area_id"],
+            "enumeration_area_name": row["enumeration_area_name"],
+            "grid_cell_count": row["grid_cell_count"],
+        })
+
+    return {
+        "available": True,
+        "district_count": len(district_map),
+        "districts": [
+            {
+                "district": district,
+                "enumeration_area_count": len(areas),
+                "enumeration_areas": areas,
+            }
+            for district, areas in district_map.items()
+        ],
+    }
+
+
+@app.get("/api/locations/enumeration-area-grids")
+def get_enumeration_area_grids(enumeration_area_id: str = Query(...)):
+    """Return grid diagnostics intersecting a real enumeration area."""
+    try:
+        from backend.database.connection import fetch_all
+
+        rows = fetch_all(
+            """
+            select
+                ea.enumeration_area_id,
+                ea.enumeration_area_name,
+                ea.district,
+                eagi.grid_id,
+                eagi.overlap_area_km2,
+                eagi.overlap_fraction,
+                eagi.contains_centroid
+            from enumeration_area_grid_intersections eagi
+            join enumeration_areas ea
+                on ea.enumeration_area_id = eagi.enumeration_area_id
+            where eagi.enumeration_area_id = %(enumeration_area_id)s
+            order by eagi.contains_centroid desc, eagi.overlap_fraction desc
+            """,
+            {"enumeration_area_id": enumeration_area_id},
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail="Enumeration-area grid mapping is unavailable until real EA polygons are loaded and clipped to grid cells.",
+        )
+
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Enumeration area '{enumeration_area_id}' was not found.")
+
+    results = normalize_results(load_results())
+    by_grid = {str(row.get("grid_id")): row for row in results}
+    grids = []
+    for row in rows:
+        diagnostic = by_grid.get(str(row["grid_id"]))
+        if diagnostic:
+            grids.append({**row, **diagnostic})
+
+    return {
+        "enumeration_area_id": enumeration_area_id,
+        "grid_count": len(grids),
+        "grids": grids,
+    }
+
+
 @app.get("/api/locations/search")
 def search_locations(name: str = Query(...), limit: int = Query(default=10)):
     name_lower = name.lower()

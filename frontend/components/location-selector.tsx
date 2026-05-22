@@ -407,14 +407,14 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
   const riskColor = RISK_COLORS[risk]
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="relative z-[1400] flex flex-col gap-2">
       {error === "offline" && (
         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-[#92400e] bg-[#fef3c7] border border-[#fde68a] w-fit">
           <AlertCircle className="h-3 w-3" />
-          Backend offline — showing static location list. Grid cell data unavailable.
+          Backend offline - showing static location list. Grid cell data unavailable.
         </div>
       )}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="relative z-[1400] flex flex-wrap items-center gap-3">
       {/* Global Search */}
       <div className="relative">
         <div className="flex items-center gap-2 rounded-xl px-3 py-2 transition-all w-64"
@@ -432,7 +432,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
         </div>
         {searchOpen && globalResults.length > 0 && (
           <div className="absolute top-full left-0 z-50 mt-1.5 w-72 max-h-60 overflow-y-auto rounded-2xl bg-white"
-               style={{ boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+               style={{ zIndex: 2000, boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
                onMouseDown={(e) => e.stopPropagation()}
                onTouchStart={(e) => e.stopPropagation()}
                onWheel={(e) => e.stopPropagation()}
@@ -459,7 +459,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       {/* Location pin label */}
       <div className="flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-widest text-[#6b7a8d]">
         <MapPin className="h-3.5 w-3.5" />
-        Filter:
+        Grid filter:
       </div>
       <div className="relative">
         <button
@@ -480,7 +480,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
         {districtOpen && (
           <div
             className="absolute top-full left-0 z-50 mt-1.5 w-60 rounded-2xl overflow-hidden"
-            style={{ background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+            style={{ zIndex: 2000, background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
@@ -509,7 +509,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                   style={{ color: d.district === selectedDistrict ? "#1F7A63" : "#0F2A3D", fontWeight: d.district === selectedDistrict ? 700 : 500 }}
                 >
                   <span>{d.district}</span>
-                  <span className="text-[11px] text-[#6b7a8d]">{d.ta_count} TAs</span>
+                  <span className="text-[11px] text-[#6b7a8d]">{d.ta_count} areas</span>
                 </button>
               ))}
               {filteredDistricts.length === 0 && (
@@ -534,7 +534,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           }}
         >
           <span className="max-w-[140px] truncate">
-            {selectedTA ? `TA ${selectedTA}` : "All TAs"}
+            {selectedTA ? selectedTA : "All Areas"}
           </span>
           <ChevronDown className={`h-3.5 w-3.5 text-[#6b7a8d] transition-transform ${taOpen ? "rotate-180" : ""}`} />
         </button>
@@ -542,7 +542,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
         {taOpen && (
           <div
             className="absolute top-full left-0 z-50 mt-1.5 w-64 rounded-2xl overflow-hidden"
-            style={{ background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+            style={{ zIndex: 2000, background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
             onMouseDown={(e) => e.stopPropagation()}
             onTouchStart={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
@@ -556,7 +556,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                   autoFocus
                   value={taSearch}
                   onChange={e => setTaSearch(e.target.value)}
-                  placeholder="Search traditional authorities..."
+                  placeholder="Search mapped areas..."
                   className="flex-1 bg-transparent text-[12px] outline-none text-[#0F2A3D] placeholder-[#b0bac7]"
                 />
               </div>
@@ -568,7 +568,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                 className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] text-left transition-colors hover:bg-[#f8fafc]"
                 style={{ color: !selectedTA ? "#1F7A63" : "#6b7a8d", fontWeight: !selectedTA ? 700 : 400 }}
               >
-                <span>All TAs in {selectedDistrict}</span>
+                <span>All mapped areas in {selectedDistrict}</span>
               </button>
               <div className="mx-3 my-1 border-t border-[#f0f4f8]" />
               {filteredTas.map((t, idx) => {
@@ -591,7 +591,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                 )
               })}
               {filteredTas.length === 0 && (
-                <p className="px-4 py-3 text-[12px] text-[#6b7a8d]">No TAs found</p>
+                <p className="px-4 py-3 text-[12px] text-[#6b7a8d]">No mapped areas found</p>
               )}
             </div>
           </div>
@@ -617,7 +617,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
             ) : (
               <>
                 <span className="max-w-[140px] truncate">
-                  {currentGridData?.areaName || "Select Area"}
+                  {currentGridData?.areaName || "Select Grid Cell"}
                 </span>
                 <ChevronDown className={`h-3.5 w-3.5 text-[#6b7a8d] transition-transform ${areaOpen ? "rotate-180" : ""}`} />
               </>
@@ -627,7 +627,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           {areaOpen && !gridsLoading && (
             <div
               className="absolute top-full left-0 z-50 mt-1.5 w-64 rounded-2xl overflow-hidden"
-              style={{ background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
+              style={{ zIndex: 2000, background: "white", boxShadow: "0 8px 32px -4px rgba(15,42,61,0.18), 0 0 0 1px #e2e8f0" }}
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
               onWheel={(e) => e.stopPropagation()}
@@ -641,7 +641,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                     autoFocus
                     value={areaSearch}
                     onChange={e => setAreaSearch(e.target.value)}
-                    placeholder="Search Areas..."
+                    placeholder="Search grid cells..."
                     className="flex-1 bg-transparent text-[12px] outline-none text-[#0F2A3D] placeholder-[#b0bac7]"
                   />
                 </div>
@@ -653,7 +653,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                   className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] text-left transition-colors hover:bg-[#f8fafc]"
                   style={{ color: !selectedArea ? "#1F7A63" : "#6b7a8d", fontWeight: !selectedArea ? 700 : 400 }}
                 >
-                  <span>All Areas in TA {selectedTA}</span>
+                  <span>All grid cells in {selectedTA}</span>
                 </button>
                 <div className="mx-3 my-1 border-t border-[#f0f4f8]" />
                 {filteredAreas.map(g => {
@@ -693,7 +693,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           style={{ color: riskColor.text, background: riskColor.bg, border: `1px solid ${riskColor.border}` }}
         >
           <span className="h-1.5 w-1.5 rounded-full inline-block" style={{ backgroundColor: riskColor.text }} />
-          {risk} Risk · {currentTaData.grid_cell_count} grid cells
+          {risk} Risk / {currentTaData.grid_cell_count} grid cells
         </div>
       )}
     </div>

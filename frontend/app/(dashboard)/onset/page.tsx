@@ -5,7 +5,6 @@ import { useUser } from "@/lib/user-context"
 import { Wifi } from "lucide-react"
 import type { DistrictSummary } from "@/lib/algorithm-api"
 import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
-import GridGraph from "@/components/grid-graph"
 import GridDiagnosticWidget from "@/components/grid-diagnostic-widget"
 import SeasonalOnsetTimeline from "@/components/seasonal-onset-timeline"
 import dynamic from "next/dynamic"
@@ -82,7 +81,6 @@ export default function OnsetInfoPage() {
             />
           </div>
           <SeasonalOnsetTimeline location={selectedLocation} />
-          <GridGraph location={selectedLocation} metricType="onset" />
         </div>
 
         <div className="flex flex-col gap-5">
