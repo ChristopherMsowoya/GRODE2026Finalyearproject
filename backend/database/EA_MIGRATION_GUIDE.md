@@ -25,7 +25,13 @@ Accepted import file:
 backend/data/gis/enumeration_areas/malawi_eas_bnd.geojson
 ```
 
-The import script expects EPSG:4326 GeoJSON. Convert shapefile or GeoPackage inputs before import:
+The import script accepts EPSG:4326 GeoJSON or Shapefile inputs. If you downloaded the HDX/MASDAP shapefile into the project, you can import it directly:
+
+```powershell
+python -m backend.database.import_enumeration_areas --input backend\database\data\shapefiles\enum\ECHO2_prioritization.shp
+```
+
+If you use GeoPackage or another format, convert it to GeoJSON first:
 
 ```powershell
 ogr2ogr -t_srs EPSG:4326 -f GeoJSON backend\data\gis\enumeration_areas\malawi_eas_bnd.geojson path\to\source_file.shp
