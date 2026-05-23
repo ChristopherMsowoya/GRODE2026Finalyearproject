@@ -136,7 +136,7 @@ export default function DashboardPage() {
         />
       </section>
 
-      <section className="rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm">
+      {/* <section className="rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm"> 
         <div className="flex flex-col gap-3">
           <div>
             <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">System State</p>
@@ -146,7 +146,7 @@ export default function DashboardPage() {
             ACTIVE ALGORITHM LIVE
           </div>
         </div>
-      </section>
+      </section>*/}
     </div>
   )
 }
