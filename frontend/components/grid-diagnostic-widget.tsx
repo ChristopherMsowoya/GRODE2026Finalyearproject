@@ -1,6 +1,6 @@
 "use client"
 
-import { AlertCircle, Wifi } from "lucide-react"
+import { Wifi } from "lucide-react"
 import type { DistrictSummary } from "@/lib/algorithm-api"
 import type { SelectedLocation } from "@/components/location-selector"
 
@@ -58,12 +58,6 @@ export default function GridDiagnosticWidget({
           </div>
         ))}
       </div>
-      {!selectedLocation?.gridData && (
-        <div className="mt-4 rounded-md border border-dashed border-[#e2e8f0] bg-white p-4 flex flex-col items-center justify-center text-center gap-2">
-          <AlertCircle className="h-6 w-6 text-[#6b7a8d]" />
-          <p className="text-[12px] text-[#6b7a8d] font-medium">Select location under grid cell to view grid-level diagnostics</p>
-        </div>
-      )}
     </div>
   )
 }
