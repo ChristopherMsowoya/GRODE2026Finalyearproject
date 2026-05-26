@@ -17,8 +17,8 @@ const navItems = [
   { name: "Onset Info",       href: "/onset",        icon: Sun             },
   { name: "False-Onset",      href: "/false-onset",  icon: AlertTriangle   },
   { name: "Dry Spell",        href: "/dry-spell",    icon: Sprout          },
-  { name: "Community",        href: "/community",    icon: Users           },
-  { name: "Subscription",     href: "/subscription", icon: Crown           },
+  // { name: "Community",        href: "/community",    icon: Users           },
+  { name: "Developer Portal",     href: "/developer-portal", icon: Crown   },
 ]
 
 const footerNavItems = [
