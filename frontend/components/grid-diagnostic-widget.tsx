@@ -18,6 +18,7 @@ function percent(value: number | null | undefined) {
 }
 
 export default function GridDiagnosticWidget({
+  metricLabel,
   metricValue,
   selectedLocation,
   defaultDistrict,
@@ -26,9 +27,7 @@ export default function GridDiagnosticWidget({
 }: GridDiagnosticWidgetProps) {
   const gridData = selectedLocation?.gridData
   const selectedArea = selectedLocation?.areaName || selectedLocation?.ta || selectedLocation?.district || defaultDistrict
-  const onsetProbability = gridData?.onset_probability ?? metricValue
-  const falseOnsetProbability = gridData?.false_onset_probability ?? liveDistrict?.average_false_onset_probability
-  const drySpellProbability = gridData?.dry_spell_probability ?? liveDistrict?.average_dry_spell_probability
+  const riskLevel = gridData?.overall_risk_level || selectedLocation?.taData?.overall_risk_level || liveDistrict?.overall_risk_level || "Pending"
 
   return (
     <div className="rounded-lg bg-white p-6 shadow-sm border border-[#e9edf1]">
@@ -47,10 +46,8 @@ export default function GridDiagnosticWidget({
         {[
           ["Selected Area", selectedArea],
           ["Grid ID", selectedLocation?.grid || "Select an area grid"],
-          ["Onset Probability", percent(onsetProbability)],
-          ["False Onset Probability", percent(falseOnsetProbability)],
-          ["Dry Spell Probability", percent(drySpellProbability)],
-          ["Risk Level", gridData?.overall_risk_level || selectedLocation?.taData?.overall_risk_level || liveDistrict?.overall_risk_level || "Pending"],
+          [metricLabel, percent(metricValue)],
+          ["Risk Level", riskLevel],
         ].map(([label, value]) => (
           <div key={label} className="rounded-md border border-[#e2e8f0] bg-[#f8fafc] p-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">{label}</p>

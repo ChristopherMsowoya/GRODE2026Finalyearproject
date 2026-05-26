@@ -88,7 +88,12 @@ export default function DrySpellPage() {
         <div className="flex flex-col gap-5">
           <GridDiagnosticWidget
             metricLabel="Dry Spell Probability"
-            metricValue={selectedLocation?.gridData?.dry_spell_probability ?? null}
+            metricValue={
+              selectedLocation?.gridData?.dry_spell_probability ??
+              selectedLocation?.taData?.average_dry_spell_probability ??
+              liveSelectedDistrict?.average_dry_spell_probability ??
+              null
+            }
             selectedLocation={selectedLocation}
             defaultDistrict={defaultDistrict}
             liveStatus={liveStatus}
