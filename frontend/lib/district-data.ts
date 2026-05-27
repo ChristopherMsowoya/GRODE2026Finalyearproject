@@ -23,7 +23,7 @@ export interface DistrictEnvironmentalData {
   }
   riskAssessment: {
     falseOnsetRisk: "low" | "medium" | "high"
-    cropStressRisk: "low" | "medium" | "high"
+    drySpellRisk: "low" | "medium" | "high"
   }
   location: {
     region: string
@@ -52,7 +52,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "medium",
-      cropStressRisk: "low",
+      drySpellRisk: "low",
     },
     location: {
       region: "Central",
@@ -78,7 +78,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "high",
-      cropStressRisk: "high",
+      drySpellRisk: "high",
     },
     location: {
       region: "Southern",
@@ -104,7 +104,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "low",
-      cropStressRisk: "low",
+      drySpellRisk: "low",
     },
     location: {
       region: "Central",
@@ -130,7 +130,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "medium",
-      cropStressRisk: "medium",
+      drySpellRisk: "medium",
     },
     location: {
       region: "Southern",
@@ -156,7 +156,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "high",
-      cropStressRisk: "high",
+      drySpellRisk: "high",
     },
     location: {
       region: "Central",
@@ -182,7 +182,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "medium",
-      cropStressRisk: "medium",
+      drySpellRisk: "medium",
     },
     location: {
       region: "Central",
@@ -209,7 +209,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "high",
-      cropStressRisk: "high",
+      drySpellRisk: "high",
     },
     location: {
       region: "Southern",
@@ -235,7 +235,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "medium",
-      cropStressRisk: "low",
+      drySpellRisk: "low",
     },
     location: {
       region: "Central",
@@ -261,7 +261,7 @@ const DISTRICT_DATA: Record<string, DistrictEnvironmentalData> = {
     },
     riskAssessment: {
       falseOnsetRisk: "medium",
-      cropStressRisk: "low",
+      drySpellRisk: "low",
     },
     location: {
       region: "Central",

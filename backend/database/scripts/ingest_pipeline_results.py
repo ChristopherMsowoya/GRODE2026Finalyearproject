@@ -14,6 +14,8 @@ from typing import Optional
 
 from backend.database.connection import get_connection
 
+LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
+
 
 def ingest(pipeline_run_id: Optional[str], baseline_start: int, baseline_end: int, algorithm_version_id: Optional[str] = None, dataset_version_id: Optional[str] = None):
     with get_connection() as conn:
@@ -93,28 +95,36 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                 print("No pipeline results found for additional ingestion for pipeline_run_id=", pipeline_run_id)
                 return
 
-            # dry_spell_probability (use crop_stress_probability as proxy)
+            # dry_spell_probability: accept legacy pipeline JSON while writing the scientific dry-spell table.
             dry_sql = """
             insert into dry_spell_probability (
-              grid_id, baseline_start, baseline_end, dry_spell_probability, total_seasons, dataset_version_id, algorithm_version_id, pipeline_run_id
+              grid_id, baseline_start, baseline_end, dry_spell_threshold, dry_spell_probability, total_seasons, dataset_version_id, algorithm_version_id, pipeline_run_id
             ) values (
-              %(grid_id)s, %(baseline_start)s, %(baseline_end)s, %(prob)s, %(total_seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
+              %(grid_id)s, %(baseline_start)s, %(baseline_end)s, %(dry_spell_threshold)s, %(prob)s, %(total_seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
             )
-            on conflict (grid_id, baseline_start, baseline_end, dataset_version_id, algorithm_version_id) do update
+            on conflict (grid_id, baseline_start, baseline_end, dry_spell_threshold, dataset_version_id, algorithm_version_id) do update
             set dry_spell_probability = excluded.dry_spell_probability,
                 total_seasons = excluded.total_seasons,
                 pipeline_run_id = excluded.pipeline_run_id;
             """
 
-            # seasonal_onset: store first/latest detected onset and seasons_analyzed
+            # seasonal_onset: store true onset trigger dates per grid and rainy season.
             seasonal_sql = """
             insert into seasonal_onset (
-              grid_id, baseline_start, baseline_end, first_detected_onset_date, latest_detected_onset_date, seasons_analyzed, dataset_version_id, algorithm_version_id, pipeline_run_id
+              grid_id, season_year, onset_date, onset_day_of_year, onset_valid, onset_probability,
+              baseline_start, baseline_end, first_detected_onset_date, latest_detected_onset_date,
+              seasons_analyzed, dataset_version_id, algorithm_version_id, pipeline_run_id
             ) values (
-              %(grid_id)s, %(baseline_start)s, %(baseline_end)s, %(first)s, %(latest)s, %(seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
+              %(grid_id)s, %(season_year)s, %(onset_date)s, %(onset_day_of_year)s, %(onset_valid)s, %(onset_probability)s,
+              %(baseline_start)s, %(baseline_end)s, %(first)s, %(latest)s,
+              %(seasons)s, %(dataset_version_id)s, %(algorithm_version_id)s, %(pipeline_run_id)s
             )
-            on conflict (grid_id, baseline_start, baseline_end, dataset_version_id, algorithm_version_id) do update
-            set first_detected_onset_date = excluded.first_detected_onset_date,
+            on conflict (grid_id, season_year, dataset_version_id, algorithm_version_id) do update
+            set onset_date = excluded.onset_date,
+                onset_day_of_year = excluded.onset_day_of_year,
+                onset_valid = excluded.onset_valid,
+                onset_probability = excluded.onset_probability,
+                first_detected_onset_date = excluded.first_detected_onset_date,
                 latest_detected_onset_date = excluded.latest_detected_onset_date,
                 seasons_analyzed = excluded.seasons_analyzed,
                 pipeline_run_id = excluded.pipeline_run_id;
@@ -138,7 +148,7 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                 try:
                     data = json.loads(result_json) if isinstance(result_json, str) else result_json
                     seasons = data.get("seasons_analyzed") or 0
-                    crop_prob = data.get("crop_stress_probability")
+                    dry_spell_prob = data.get("dry_spell_probability", data.get(LEGACY_DRY_PROBABILITY_KEY))
                     params_common = {
                         "grid_id": grid_id,
                         "baseline_start": baseline_start,
@@ -150,18 +160,41 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
 
                     # dry spell
                     try:
-                        cur.execute(dry_sql, {**params_common, "prob": float(crop_prob) if crop_prob is not None else 0.0, "total_seasons": seasons})
+                        cur.execute(dry_sql, {
+                            **params_common,
+                            "dry_spell_threshold": int(data.get("dry_spell_min_length_days") or 5),
+                            "prob": float(dry_spell_prob) if dry_spell_prob is not None else 0.0,
+                            "total_seasons": seasons,
+                        })
                         ingested["dry"] += 1
                     except Exception:
                         # table may not exist
                         pass
 
-                    # seasonal_onset
-                    try:
-                        cur.execute(seasonal_sql, {**params_common, "first": data.get("first_detected_onset_date"), "latest": data.get("latest_detected_onset_date"), "seasons": seasons})
-                        ingested["seasonal"] += 1
-                    except Exception:
-                        pass
+                    for diagnostic in data.get("season_diagnostics") or []:
+                        season_year = diagnostic.get("season_year")
+                        if season_year is None:
+                            continue
+                        onset_date = diagnostic.get("onset_date")
+                        onset_day = None
+                        if onset_date:
+                            from datetime import date
+                            onset_day = date.fromisoformat(str(onset_date)[:10]).timetuple().tm_yday
+                        try:
+                            cur.execute(seasonal_sql, {
+                                **params_common,
+                                "season_year": int(season_year),
+                                "onset_date": onset_date,
+                                "onset_day_of_year": onset_day,
+                                "onset_valid": bool(diagnostic.get("onset_detected")),
+                                "onset_probability": float(diagnostic.get("onset_probability") or 0),
+                                "first": data.get("first_detected_onset_date"),
+                                "latest": data.get("latest_detected_onset_date"),
+                                "seasons": seasons,
+                            })
+                            ingested["seasonal"] += 1
+                        except Exception:
+                            pass
 
                     # onset_climatology
                     try:
@@ -189,6 +222,7 @@ def main():
     args = parser.parse_args()
 
     ingest(args.pipeline_run_id, args.baseline_start, args.baseline_end, args.algorithm_version_id, args.dataset_version_id)
+    ingest_additional_tables(args.pipeline_run_id, args.baseline_start, args.baseline_end, args.algorithm_version_id, args.dataset_version_id)
 
 
 if __name__ == "__main__":

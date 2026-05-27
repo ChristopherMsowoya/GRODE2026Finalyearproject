@@ -22,7 +22,8 @@ function GridLayerRenderer() {
     let cancelled = false
     void (async () => {
       try {
-        const g = await fetchGridCells({ limit: 5000 })
+        // limit capped to 1000 to match backend validation
+        const g = await fetchGridCells({ limit: 1000 })
         if (!cancelled) setGrid(g)
       } catch (err) {
         console.warn('Failed to load grid cells:', err)
@@ -94,7 +95,7 @@ function getStyle(riskLevel: string, hovered = false): PathOptions {
 
 const LAYERS_INIT = [
   { id:"rainfall",   name:"Rainfall Intensity",  desc:"Live Doppler Feed",       icon:"🌧", iconBg:"#1e3a52", enabled:true  },
-  { id:"crop",       name:"Crop Stress Zones",    desc:"NDVI Satellite Data",     icon:"🌿", iconBg:"#1a3d2a", enabled:true  },
+  { id:"crop",       name:"Dry Spell Zones",    desc:"NDVI Satellite Data",     icon:"🌿", iconBg:"#1a3d2a", enabled:true  },
   { id:"boundaries", name:"District Boundaries",  desc:"Administrative Lines",    icon:"▦",  iconBg:"#2a3a1a", enabled:false },
 ]
 

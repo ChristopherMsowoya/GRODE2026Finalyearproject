@@ -133,3 +133,22 @@
     50% { opacity: 0.5; }
   }
 }
+
+/* Keep Leaflet maps below application filters and custom dropdowns. */
+.leaflet-container {
+  z-index: 0;
+}
+
+.leaflet-pane {
+  z-index: 10;
+}
+
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 30;
+}
+
+.leaflet-popup-pane,
+.leaflet-tooltip-pane {
+  z-index: 40;
+}

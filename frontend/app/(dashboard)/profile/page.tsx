@@ -430,7 +430,7 @@ export default function ProfilePage() {
                 {
                   key: "riskAlerts" as const,
                   label: "Risk Alerts",
-                  desc: `False-onset & crop stress alerts for ${DISTRICT_LABELS[user.district] ?? user.district}`,
+                  desc: `False-onset & dry spell alerts for ${DISTRICT_LABELS[user.district] ?? user.district}`,
                 },
                 {
                   key: "onsetAlerts" as const,

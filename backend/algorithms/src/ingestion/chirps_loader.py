@@ -15,6 +15,10 @@ def normalize_chirps_dataset(ds):
     if "longitude" in ds.coords and "lon" not in ds.coords:
         rename_map["longitude"] = "lon"
 
+    # Handle both CHIRPS variable naming conventions: 'pr' or 'precip'
+    if "pr" in ds.data_vars and "precip" not in ds.data_vars:
+        rename_map["pr"] = "precip"
+
     if rename_map:
         ds = ds.rename(rename_map)
 
@@ -43,7 +47,8 @@ def resolve_chirps_files(path_or_dir):
     path = Path(path_or_dir).expanduser().resolve()
 
     if path.is_dir():
-        patterns = ("chirps-v*.nc", "CHIRPS*.nc")
+        # Match various CHIRPS naming conventions plus generic *.nc fallback
+        patterns = ("chirps-v*.nc", "CHIRPS*.nc", "CHIRPS_*.nc", "*.nc")
         file_set = {
             filepath.resolve()
             for pattern in patterns

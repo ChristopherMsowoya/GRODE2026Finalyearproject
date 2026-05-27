@@ -35,16 +35,35 @@ def get_connection():
 
     url = get_database_url()
 
-    # Try a normal connect first (don't wrap the yield in the same try/except,
-    # so exceptions thrown from the caller's with-block aren't intercepted here).
+    # Try a normal connect first with a short timeout. Browser requests in the
+    # frontend time out quickly, so database-backed endpoints must fail fast
+    # enough to use local pipeline-output fallbacks.
+    connect_timeout = int(os.environ.get("DATABASE_CONNECT_TIMEOUT", "5"))
     try:
-        conn = psycopg.connect(url)
+        conn = psycopg.connect(url, connect_timeout=connect_timeout)
     except Exception as exc:
         err = exc
     else:
         with conn as connection:
             yield connection
             return
+
+    # Second attempt: swap transaction-pooler port 6543 → session-pooler port 5432
+    # Session mode is required for DDL statements and long-running transactions.
+    try:
+        from urllib.parse import urlparse as _up, urlunparse as _uu
+        _parsed = _up(url)
+        if _parsed.port == 6543:
+            session_url = _uu((_parsed.scheme, f"{_parsed.hostname}:5432",
+                               _parsed.path, _parsed.params, _parsed.query, ""))
+            # rebuild with correct netloc including username/password
+            session_url = url.replace(':6543/', ':5432/')
+            conn2 = psycopg.connect(session_url, connect_timeout=connect_timeout)
+            with conn2 as connection:
+                yield connection
+                return
+    except Exception:
+        pass
 
     # Fallback: if the URL references a Supabase pooler host, attempt connecting
     # to the pooler's IP address while setting the SNI/host to the tenant DB host.
@@ -78,7 +97,7 @@ def get_connection():
             if sslmode:
                 conn_params['sslmode'] = sslmode
 
-            conn2 = psycopg.connect(**conn_params)
+            conn2 = psycopg.connect(**conn_params, connect_timeout=connect_timeout)
             with conn2 as connection:
                 yield connection
                 return

@@ -5,14 +5,21 @@ from pathlib import Path
 import csv
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+
+import numpy as np
 
 from ingestion.chirps_loader import load_chirps
 from processing.grid_extractor import DEFAULT_BOUNDS, iter_grids_fast
-from utils.timeseries_utils import split_by_year
+from utils.timeseries_utils import split_by_rainy_season
 from algorithms.onset import detect_onset_details_fast
 from algorithms.false_onset import calculate_false_onset_fast
-from algorithms.crop_stress import calculate_stress_fast
+from algorithms.dry_spell import (
+    DRY_DAY_THRESHOLD_MM,
+    DRY_SPELL_MIN_LENGTH_DAYS,
+    calculate_dry_spell_probability,
+    dry_spell_event_for_season,
+)
 from models.result_schema import build_result
 
 # DB integration: write pipeline run + per-grid JSON results linked to nearest grid_cells
@@ -67,7 +74,7 @@ def run(filepath=None, region="malawi", bounds=None):
     results = []
 
     for i, grid in enumerate(iter_grids_fast(ds)):
-        seasons = split_by_year(grid["dates"], grid["rainfall"])
+        seasons = split_by_rainy_season(grid["dates"], grid["rainfall"])
 
         onset_dates = []
         onset_indices = []
@@ -81,8 +88,38 @@ def run(filepath=None, region="malawi", bounds=None):
             onset_indices.append(onset_index)
 
         false_prob = calculate_false_onset_fast(seasons, onset_indices)
-        stress_prob = calculate_stress_fast(seasons, onset_indices)
+        stress_prob = calculate_dry_spell_probability(seasons, onset_indices)
         valid_onset_dates = [date for date in onset_dates if date is not None]
+
+        season_diagnostics = []
+        for season_index, season in enumerate(seasons):
+            onset_index = onset_indices[season_index]
+            dry_event = dry_spell_event_for_season(season, onset_index)
+            false_event = dry_spell_event_for_season(
+                season,
+                onset_index,
+                min_spell_length=10,
+            )
+            season_year = season.get("season_year")
+            onset_detected = onset_index is not None
+
+            season_diagnostics.append({
+                "season_year": season_year,
+                "season": season.get("season") or (str(season_year) if season_year is not None else f"S{season_index + 1}"),
+                "onset_detected": onset_detected,
+                "onset_probability": 1.0 if onset_detected else 0.0,
+                "onset_date": str(onset_dates[season_index]) if onset_dates[season_index] is not None else None,
+                "false_onset_detected": false_event["detected"],
+                "false_onset_probability": 1.0 if false_event["detected"] else 0.0,
+                "dry_spell_detected": dry_event["detected"],
+                "dry_spell_probability": 1.0 if dry_event["detected"] else 0.0,
+                "dry_spell_max_length_days": dry_event["max_dry_spell_length"],
+                "dry_day_count": dry_event["dry_day_count"],
+                "dry_day_threshold_mm": DRY_DAY_THRESHOLD_MM,
+                "dry_spell_min_length_days": DRY_SPELL_MIN_LENGTH_DAYS,
+            })
+
+        onset_timeline = build_onset_timeline(season_diagnostics)
 
         result = build_result(
             grid_id=f"G{i}",
@@ -93,7 +130,9 @@ def run(filepath=None, region="malawi", bounds=None):
             seasons_analyzed=len(seasons),
             seasons_with_detected_onset=len(valid_onset_dates),
             false_prob=false_prob,
-            stress_prob=stress_prob
+            stress_prob=stress_prob,
+            season_diagnostics=season_diagnostics,
+            onset_timeline=onset_timeline,
         )
 
         results.append(result)
@@ -137,6 +176,51 @@ def write_csv(results, output_path):
             if attempt == 2:
                 raise
             time.sleep(1)
+
+
+def build_onset_timeline(season_diagnostics):
+    valid = [
+        diagnostic
+        for diagnostic in season_diagnostics
+        if diagnostic.get("onset_detected") and diagnostic.get("onset_date")
+    ]
+    if not valid:
+        return {
+            "p10_onset_date": None,
+            "median_onset_date": None,
+            "p90_onset_date": None,
+            "trigger_count": 0,
+            "series": [],
+        }
+
+    day_offsets = []
+    for diagnostic in valid:
+        onset_date = datetime.fromisoformat(str(diagnostic["onset_date"])).date()
+        season_year = int(diagnostic["season_year"])
+        season_start = datetime(season_year, 11, 1).date()
+        day_offsets.append((onset_date - season_start).days)
+
+    median_year = int(valid[len(valid) // 2]["season_year"])
+    season_start = datetime(median_year, 11, 1).date()
+
+    def offset_to_date(offset):
+        return str(season_start + timedelta(days=int(round(offset))))
+
+    return {
+        "p10_onset_date": offset_to_date(np.percentile(day_offsets, 10)),
+        "median_onset_date": offset_to_date(np.percentile(day_offsets, 50)),
+        "p90_onset_date": offset_to_date(np.percentile(day_offsets, 90)),
+        "trigger_count": len(valid),
+        "series": [
+            {
+                "season": diagnostic.get("season"),
+                "season_year": diagnostic.get("season_year"),
+                "onset_date": diagnostic.get("onset_date"),
+                "onset_probability": diagnostic.get("onset_probability", 1.0),
+            }
+            for diagnostic in valid
+        ],
+    }
 
 
 if __name__ == "__main__":

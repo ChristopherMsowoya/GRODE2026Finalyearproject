@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { fetchGridCell, fetchAlgorithmResults } from "@/lib/algorithm-api"
 import {
@@ -120,7 +120,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
-export default function DetailsPage() {
+function DetailsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const gridId = searchParams?.get("grid_id")
@@ -233,8 +233,8 @@ export default function DetailsPage() {
                         <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.false_onset_probability * 100).toFixed(1)}%</p>
                       </div>
                       <div className="rounded-xl bg-white p-3 border border-[#e9edf1]">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">Crop Stress</p>
-                        <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.crop_stress_probability * 100).toFixed(1)}%</p>
+                        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">Dry Spell</p>
+                        <p className="mt-1 font-semibold text-[#0F2A3D]">{(algoResult.dry_spell_probability * 100).toFixed(1)}%</p>
                       </div>
                     </div>
                   )}
@@ -354,5 +354,13 @@ export default function DetailsPage() {
       </div>
 
     </div>
+  )
+}
+
+export default function DetailsPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-[#6b7a8d]">Loading details...</div>}>
+      <DetailsPageContent />
+    </Suspense>
   )
 }
