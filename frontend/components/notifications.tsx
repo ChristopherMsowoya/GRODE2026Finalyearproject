@@ -124,12 +124,18 @@ export function useNotifications() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
 
   const addNotification = (notification: Omit<NotificationItem, 'id' | 'timestamp'>) => {
+    const id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? (crypto as any).randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+
     const newNotification: NotificationItem = {
       ...notification,
-      id: Date.now().toString(),
+      id,
       timestamp: new Date(),
       read: false,
     }
+
     setNotifications(prev => [newNotification, ...prev])
   }
 
