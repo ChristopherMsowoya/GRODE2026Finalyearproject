@@ -118,19 +118,26 @@ def _local_result_to_feature(result: dict) -> dict:
     }
 
 
-def _local_feature_collection(limit: int = 5000, offset: int = 0) -> dict:
+def _local_feature_collection(limit: int = 5000, offset: int = 0, district: Optional[str] = None) -> dict:
     if not LOCAL_RESULTS_PATH.exists():
         return {"type": "FeatureCollection", "count": 0, "features": [], "source": "local-results"}
-    return _local_feature_collection_cached(limit, offset, LOCAL_RESULTS_PATH.stat().st_mtime_ns)
+    return _local_feature_collection_cached(limit, offset, district or "", LOCAL_RESULTS_PATH.stat().st_mtime_ns)
 
 
-@lru_cache(maxsize=8)
-def _local_feature_collection_cached(limit: int = 5000, offset: int = 0, _mtime_ns: int = 0) -> dict:
+@lru_cache(maxsize=64)
+def _local_feature_collection_cached(limit: int = 5000, offset: int = 0, district: str = "", _mtime_ns: int = 0) -> dict:
     rows = _load_local_results()
+    if district:
+        wanted = district.lower()
+        rows = [
+            row for row in rows
+            if str(row.get("district_name") or row.get("district") or "").lower() == wanted
+        ]
     page = rows[offset:offset + limit]
     return {
         "type": "FeatureCollection",
         "count": len(page),
+        "total": len(rows),
         "features": [_local_result_to_feature(row) for row in page],
         "source": "local-results",
     }
@@ -234,9 +241,9 @@ def _diagnostic_select_sql() -> str:
 
 
 @router.get("/cells")
-def list_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, source_grid: Optional[str] = None):
+def list_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, source_grid: Optional[str] = None, district: Optional[str] = None):
     if not USE_DATABASE_GRID_API:
-        return _local_feature_collection(limit, offset)
+        return _local_feature_collection(limit, offset, district)
 
     sql = (
         "select grid_id, grid_code, centroid_lat, centroid_lon, area_km2, source_grid, "
@@ -254,13 +261,13 @@ def list_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, s
         rows = fetch_all(sql, params)
         return _feature_collection(rows)
     except Exception:
-        return _local_feature_collection(limit, offset)
+        return _local_feature_collection(limit, offset, district)
 
 
 @router.get("/diagnostic-cells")
-def list_diagnostic_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, source_grid: Optional[str] = None):
+def list_diagnostic_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset: int = 0, source_grid: Optional[str] = None, district: Optional[str] = None):
     if not USE_DATABASE_GRID_API:
-        return _local_feature_collection(limit, offset)
+        return _local_feature_collection(limit, offset, district)
 
     sql = _diagnostic_select_sql()
     params = {
@@ -273,6 +280,10 @@ def list_diagnostic_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset:
         filters.append("gc.source_grid = %(source_grid)s")
         params["source_grid"] = source_grid
 
+    if district:
+        filters.append("lower(district.shape_name) = lower(%(district)s)")
+        params["district"] = district
+
     if filters:
         sql += " where " + " and ".join(filters)
 
@@ -283,7 +294,7 @@ def list_diagnostic_grid_cells(limit: int = Query(5000, ge=1, le=20000), offset:
         rows = fetch_all(sql, params)
         return _feature_collection(rows)
     except Exception:
-        return _local_feature_collection(limit, offset)
+        return _local_feature_collection(limit, offset, district)
 
 
 @router.get("/cells/{grid_id}")

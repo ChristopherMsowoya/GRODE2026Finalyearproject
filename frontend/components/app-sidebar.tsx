@@ -6,9 +6,8 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard, Map, Sun, AlertTriangle, Sprout,
-  Headphones, Settings, HelpCircle, UserPlus, Menu, MessageSquare, Crown, Users
+  Headphones, Settings, Menu, Crown
 } from "lucide-react"
-import { useUser } from "@/lib/user-context"
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
 
 const navItems = [
@@ -25,7 +24,7 @@ const footerNavItems = [
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
-function SidebarInner({ pathname, user }: { pathname: string, user: any }) {
+function SidebarInner({ pathname }: { pathname: string }) {
   return (
     <>
       {/* ── Logo ──────────────────────────────────────────────────────────── */}
@@ -80,16 +79,7 @@ function SidebarInner({ pathname, user }: { pathname: string, user: any }) {
           )
         })}
 
-        {/* ── User card / Create Account ─────────────────────────────────── */}
         <div className="pt-3 space-y-2">
-          {!user && (
-            <Link href="/create-account"
-              className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold transition-all duration-200 hover:bg-muted border border-border text-primary">
-              <UserPlus className="h-4 w-4" />
-              Create Account
-            </Link>
-          )}
-
           {/* Get Support always visible */}
           <Link href="/help"
             className="flex w-full items-center justify-center gap-2 px-4 py-3 text-[13.5px] font-bold text-white transition-all duration-200 hover:opacity-90 hover:shadow-lg active:scale-95"
@@ -105,21 +95,19 @@ function SidebarInner({ pathname, user }: { pathname: string, user: any }) {
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const { user } = useUser()
 
   return (
     <aside
       className="hidden md:flex h-screen flex-col border-r border-sidebar-border bg-white"
       style={{ width: "260px", minWidth: "260px" }}
     >
-      <SidebarInner pathname={pathname} user={user} />
+      <SidebarInner pathname={pathname} />
     </aside>
   )
 }
 
 export function MobileSidebar() {
   const pathname = usePathname()
-  const { user } = useUser()
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
@@ -135,7 +123,7 @@ export function MobileSidebar() {
       </SheetTrigger>
       <SheetContent side="left" className="p-0 w-[260px] flex flex-col bg-white [&>button]:hidden">
         <SheetTitle className="sr-only">Navigation</SheetTitle>
-        <SidebarInner pathname={pathname} user={user} />
+        <SidebarInner pathname={pathname} />
       </SheetContent>
     </Sheet>
   )

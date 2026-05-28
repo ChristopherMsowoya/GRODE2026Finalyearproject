@@ -1,21 +1,38 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts"
+import { Info } from "lucide-react"
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { fetchGridHistory, fetchSeasonYears } from "@/lib/algorithm-api"
 import { type SelectedLocation } from "./location-selector"
-import { fetchGridHistory, fetchOnsetTimeline, fetchPipelineResults, fetchSeasonYears, type OnsetTimelineResponse, type SeasonRangeOption } from "../lib/algorithm-api"
-
-const LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 
 interface GridGraphProps {
   location: SelectedLocation | null
   metricType: "onset" | "false_onset" | "dry_spell"
 }
 
-type SeriesPoint = { season: string; seasonYear: number | null; value: number; onsetDate?: string | null }
+type SeasonDiagnostic = {
+  season?: string
+  season_year?: number | null
+  onset_date?: string | null
+  false_onset_probability?: number | null
+  dry_spell_probability?: number | null
+  onset_probability?: number | null
+}
 
-const DEFAULT_SEASON_RANGES: SeasonRangeOption[] = [
-  { label: "All Seasons", value: "all", start_year: null, end_year: null },
+type ChartRow = {
+  monthOffset: number
+  label: string
+  [key: string]: string | number | null
+}
+
+const MONTH_TICKS = [
+  { value: 0, label: "Nov" },
+  { value: 30, label: "Dec" },
+  { value: 61, label: "Jan" },
+  { value: 92, label: "Feb" },
+  { value: 120, label: "Mar" },
+  { value: 151, label: "Apr" },
 ]
 
 const METRIC_CONFIG = {
@@ -39,112 +56,104 @@ const METRIC_CONFIG = {
 export default function GridGraph({ location, metricType }: GridGraphProps) {
   const grid = location?.grid ?? null
   const gridData = location?.gridData ?? null
-  const ta = location?.ta ?? null
   const district = location?.district ?? null
   const area = location?.areaName ?? null
-  const [rawSeries, setRawSeries] = useState<SeriesPoint[]>([])
-  const [seasonRange, setSeasonRange] = useState("all")
-  const [seasonRanges, setSeasonRanges] = useState<SeasonRangeOption[]>(DEFAULT_SEASON_RANGES)
+  const [availableYears, setAvailableYears] = useState<number[]>([])
   const [customStart, setCustomStart] = useState("")
   const [customEnd, setCustomEnd] = useState("")
-  const [timeline, setTimeline] = useState<OnsetTimelineResponse | null>(null)
+  const [diagnostics, setDiagnostics] = useState<SeasonDiagnostic[]>([])
   const [loading, setLoading] = useState(false)
 
   const { title, yLabel, color } = METRIC_CONFIG[metricType]
-
-  useEffect(() => {
-    let cancelled = false
-    async function loadSeasonYears() {
-      const response = await fetchSeasonYears()
-      if (cancelled) return
-      const ranges = response.ranges.length ? response.ranges : DEFAULT_SEASON_RANGES
-      setSeasonRanges(ranges)
-      if (!ranges.some((range) => range.value === seasonRange)) setSeasonRange("all")
+  const selectedRange = useMemo(() => {
+    const start = customStart.length === 4 ? Number(customStart) : null
+    const end = customEnd.length === 4 ? Number(customEnd) : null
+    if (start !== null && end === null) return { start, end: start }
+    if (start === null && end !== null) return { start: end, end }
+    return {
+      start,
+      end,
     }
-    void loadSeasonYears()
-    return () => { cancelled = true }
-  }, [seasonRange])
+  }, [customEnd, customStart])
+  const hasSelectedRange = selectedRange.start !== null || selectedRange.end !== null
 
   useEffect(() => {
     let cancelled = false
+    fetchSeasonYears().then((response) => {
+      if (!cancelled) setAvailableYears(response.available_years || [])
+    })
+    return () => { cancelled = true }
+  }, [])
 
+  useEffect(() => {
+    let cancelled = false
     async function loadSeries() {
-      if (!grid || !gridData) {
-        setRawSeries([])
+      if (!grid || !gridData || !hasSelectedRange) {
+        setDiagnostics([])
         return
       }
 
       setLoading(true)
       try {
-        const points: SeriesPoint[] = []
-        const range = parseRange(seasonRange, customStart, customEnd)
-
-        if (metricType === "onset") {
-          const onsetTimeline = await fetchOnsetTimeline(grid, range.start, range.end)
-          setTimeline(onsetTimeline)
-          for (const point of onsetTimeline.series || []) {
-            points.push({
-              season: point.onset_date,
-              seasonYear: point.season_year,
-              value: Math.round((point.onset_probability || 0) * 100),
-              onsetDate: point.onset_date,
-            })
-          }
-        }
-
-        const history = points.length === 0 ? await fetchGridHistory(grid) : null
-
-        for (const payload of ((history?.seasons || []) as any[])) {
-          const season = payload.season_year || payload.season || payload.year || (payload.baseline_start ? String(payload.baseline_start) : undefined)
-          const val = valueForMetric(payload, metricType)
-          if (typeof val === "number") points.push(toPoint(season, val, points.length))
-        }
-
-        if (points.length === 0) {
-          const res = await fetchPipelineResults(grid)
-          const rows = res?.data || res || []
-
-          for (const r of rows) {
-            const payload = r.result || r
-            const season = payload.season_year || payload.season || payload.year || (payload.baseline_start ? String(payload.baseline_start) : undefined)
-            const val = valueForMetric(payload, metricType)
-            if (typeof val === "number") points.push(toPoint(season, val, points.length))
-          }
-        }
-
-        if (points.length === 0) {
-          const agg = valueForMetric(gridData, metricType) ?? 0
-          const seasons = Math.min(5, gridData.seasons_analyzed || 1)
-          for (let i = seasons - 1; i >= 0; i--) {
-            points.push({ season: `S${i + 1}`, seasonYear: null, value: Math.round(agg * 100) })
-          }
-        }
-
-        if (!cancelled) setRawSeries(points.slice(-30))
+        const history = await fetchGridHistory(grid)
+        if (cancelled) return
+        const filtered = (history.seasons || []).filter((season) => {
+          const year = Number(season.season_year)
+          if (!Number.isFinite(year)) return false
+          if (selectedRange.start !== null && year < selectedRange.start) return false
+          if (selectedRange.end !== null && year > selectedRange.end) return false
+          return true
+        })
+        setDiagnostics(filtered)
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
-
     void loadSeries()
     return () => { cancelled = true }
-  }, [grid, metricType, gridData, seasonRange, customStart, customEnd])
+  }, [grid, gridData, hasSelectedRange, selectedRange.end, selectedRange.start])
 
-  const series = useMemo(() => filterByRange(rawSeries, seasonRange, customStart, customEnd), [rawSeries, seasonRange, customStart, customEnd])
-  const latestValue = series.length ? series[series.length - 1].value : null
-  const avgValue = series.length ? Math.round(series.reduce((sum, point) => sum + point.value, 0) / series.length) : null
-  const graphTitle = `${title}${district ? ` - ${district}` : ""}${ta ? ` / ${ta}` : ""}${area ? ` / ${area}` : ""}`
+  const seasons = useMemo(() => {
+    return diagnostics
+      .map((diagnostic) => Number(diagnostic.season_year))
+      .filter((year) => Number.isFinite(year))
+      .sort((a, b) => a - b)
+  }, [diagnostics])
+
+  const chartData = useMemo<ChartRow[]>(() => {
+    if (metricType === "false_onset" || metricType === "dry_spell") {
+      const byOffset = new Map<number, ChartRow>()
+      diagnostics.forEach((diagnostic) => {
+        const year = Number(diagnostic.season_year)
+        if (!Number.isFinite(year)) return
+        const offset = rainySeasonOffset(diagnostic.onset_date)
+        const row = byOffset.get(offset) || { monthOffset: offset, label: monthLabelForOffset(offset) }
+        row[`season_${year}`] = metricValue(diagnostic, metricType)
+        row[`season_${year}_label`] = String(diagnostic.season || formatSeason(year))
+        byOffset.set(offset, row)
+      })
+      return Array.from(byOffset.values()).sort((a, b) => a.monthOffset - b.monthOffset)
+    }
+
+    return MONTH_TICKS.map((tick) => {
+      const row: ChartRow = { monthOffset: tick.value, label: tick.label }
+      diagnostics.forEach((diagnostic) => {
+        const year = Number(diagnostic.season_year)
+        if (!Number.isFinite(year)) return
+        row[`season_${year}`] = metricValue(diagnostic, metricType)
+        row[`season_${year}_label`] = String(diagnostic.season || formatSeason(year))
+      })
+      return row
+    })
+  }, [diagnostics, metricType])
+
+  const graphTitle = `${title}${district ? ` ${district}` : ""}${area ? ` ${area}` : ""}${grid ? ` ${grid}` : ""}`
 
   if (!grid || !gridData) {
     return (
       <div className="rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-8 flex flex-col items-center justify-center gap-2 text-center">
-        <div className="h-10 w-10 rounded-full bg-[#e9edf1] flex items-center justify-center mb-1">
-          <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="#6b7a8d" strokeWidth="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
-        </div>
         <p className="text-[14px] font-semibold text-[#0F2A3D]">{title}</p>
-        <p className="text-[12px] text-[#6b7a8d]">
-          Select location under grid cell to view its historical probability across rainfall seasons.
-        </p>
+        <p className="text-[12px] text-[#6b7a8d]">Search specific area to view grid-level diagnostics.</p>
       </div>
     )
   }
@@ -152,61 +161,62 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
   return (
     <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-sm">
       <div className="px-6 pt-6 pb-4 border-b border-[#f0f4f8]">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
             <h3 className="text-[16px] font-bold text-[#0F2A3D]">{graphTitle}</h3>
-            <p className="text-[12px] font-semibold text-[#6b7a8d] mt-0.5">
-              Grid <span className="font-mono text-[#0F2A3D]">{grid}</span>
-            </p>
+            <ScientificTooltip text={`${title} shown for the selected grid cell only. Each line represents one rainy season in the selected range.`} />
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <label className="text-[11px] text-[#6b7a8d] font-bold uppercase tracking-wider whitespace-nowrap">Season Range</label>
-            <select
-              value={seasonRange}
-              onChange={(event) => setSeasonRange(event.target.value)}
-              className="rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D] cursor-pointer"
-            >
-              {seasonRanges.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 rounded-md border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[12px] font-bold text-[#6b7a8d]">
+              Enter season range
+              <ScientificTooltip text="Enter the season start years available in the system, for example 2021 to 2025 for seasons 2021-22 through 2025-26." />
+            </span>
             <input
               value={customStart}
               onChange={(event) => setCustomStart(event.target.value.replace(/\D/g, "").slice(0, 4))}
-              placeholder="Start"
-              className="w-16 rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D]"
+              placeholder={availableYears[0] ? String(availableYears[0]) : "Start"}
+              className="w-20 rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D]"
             />
             <input
               value={customEnd}
               onChange={(event) => setCustomEnd(event.target.value.replace(/\D/g, "").slice(0, 4))}
-              placeholder="End"
-              className="w-16 rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D]"
+              placeholder={availableYears.at(-1) ? String(availableYears.at(-1)) : "End"}
+              className="w-20 rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D]"
             />
           </div>
         </div>
       </div>
 
-      <div className="px-6 pt-4 pb-2">
+      <div className="px-6 pt-4 pb-5">
         {loading ? (
           <div className="h-[240px] flex items-center justify-center">
             <div
               className="h-6 w-6 rounded-full border-2 animate-spin"
-              style={{
-                borderLeftColor: color,
-                borderRightColor: color,
-                borderBottomColor: color,
-                borderTopColor: "transparent",
-              }}
+              style={{ borderLeftColor: color, borderRightColor: color, borderBottomColor: color, borderTopColor: "transparent" }}
             />
           </div>
-        ) : series.length > 0 ? (
-          <div className="h-[240px] w-full">
+        ) : !hasSelectedRange ? (
+          <div className="h-[240px] flex items-center justify-center rounded-lg border border-dashed border-[#d6dee8] bg-[#f8fafc] px-4 text-center">
+            <p className="text-[13px] font-medium text-[#6b7a8d]">Enter a season range to view grid-level seasonal lines.</p>
+          </div>
+        ) : chartData.length > 0 && seasons.length > 0 ? (
+          <div className="h-[260px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={series} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
+              <LineChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f4f8" />
-                <XAxis dataKey="season" tick={{ fontSize: 11, fill: "#6b7a8d", fontWeight: 600 }} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
+                <XAxis
+                  dataKey="monthOffset"
+                  type="number"
+                  domain={[0, 181]}
+                  ticks={MONTH_TICKS.map((tick) => tick.value)}
+                  tickFormatter={(value) => MONTH_TICKS.find((tick) => tick.value === value)?.label || ""}
+                  tick={{ fontSize: 11, fill: "#6b7a8d", fontWeight: 700 }}
+                  axisLine={{ stroke: "#e2e8f0" }}
+                  tickLine={false}
+                />
                 <YAxis
                   domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
                   tick={{ fontSize: 11, fill: "#6b7a8d" }}
                   axisLine={false}
                   tickLine={false}
@@ -214,85 +224,88 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
                   label={{ value: yLabel, angle: -90, position: "insideLeft", offset: 12, style: { fontSize: 10, fill: "#6b7a8d" } }}
                 />
                 <Tooltip
-                  formatter={(value: number) => [`${value}%`, "Onset Probability"]}
+                  formatter={(value: number, name: string, payload: any) => {
+                    const seasonYear = Number(String(name).replace("season_", ""))
+                    const row = payload?.payload as ChartRow | undefined
+                    const seasonLabel = row?.[`season_${seasonYear}_label`]
+                    return [`${value}%`, typeof seasonLabel === "string" ? seasonLabel : formatSeason(seasonYear)]
+                  }}
+                  labelFormatter={(label) => monthLabelForOffset(Number(label))}
                   labelStyle={{ color: "#0F2A3D", fontWeight: 700, fontSize: 12 }}
                   contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", fontSize: 12 }}
                 />
-                {avgValue !== null && (
-                  <ReferenceLine y={avgValue} stroke={color} strokeDasharray="4 3" strokeOpacity={0.4} label={{ value: `Avg ${avgValue}%`, fill: color, fontSize: 10, position: "right" }} />
-                )}
-                <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2.5} dot={{ r: 4, fill: color, strokeWidth: 0 }} activeDot={{ r: 6, fill: color }} />
+                {seasons.map((seasonYear, index) => (
+                  <Line
+                    key={seasonYear}
+                    type="monotone"
+                    dataKey={`season_${seasonYear}`}
+                    name={`season_${seasonYear}`}
+                    stroke={lineColor(index)}
+                    strokeWidth={2.5}
+                    dot={{ r: 4, fill: lineColor(index), strokeWidth: 0 }}
+                    activeDot={{ r: 6, fill: lineColor(index) }}
+                    isAnimationActive={false}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           </div>
         ) : (
           <div className="h-[240px] flex items-center justify-center">
-            <p className="text-[13px] text-[#6b7a8d]">No historical data available for this grid cell.</p>
+            <p className="text-[13px] text-[#6b7a8d]">No seasonal data available for this grid cell and season range.</p>
           </div>
         )}
-      </div>
-
-      <div className="px-6 py-4 border-t border-[#f0f4f8] flex items-center justify-between">
-        <span className="text-[11px] text-[#6b7a8d] uppercase tracking-wider font-bold">
-          {metricType === "onset" ? "True Onset Trigger Dates" : "Grid-Level Diagnostic Output"}
-        </span>
-        <div className="flex items-center gap-4">
-          {metricType === "onset" && timeline?.median_onset_date && <span className="text-[12px] text-[#6b7a8d]">Median: <span className="font-bold" style={{ color }}>{formatShortDate(timeline.median_onset_date)}</span></span>}
-          {avgValue !== null && <span className="text-[12px] text-[#6b7a8d]">Avg: <span className="font-bold" style={{ color }}>{avgValue}%</span></span>}
-          {latestValue !== null && <span className="text-[20px] font-extrabold" style={{ color }}>{latestValue}%</span>}
-        </div>
       </div>
     </div>
   )
 }
 
-function valueForMetric(payload: Record<string, any>, metricType: GridGraphProps["metricType"]) {
-  if (metricType === "false_onset") return payload.false_onset_probability ?? payload.false_onset_prob
-  if (metricType === "dry_spell") return payload.dry_spell_probability ?? payload[LEGACY_DRY_PROBABILITY_KEY]
-  return payload.onset_probability ?? (
-    payload.seasons_with_detected_onset && payload.seasons_analyzed
-      ? payload.seasons_with_detected_onset / payload.seasons_analyzed
-      : 0
+function metricValue(payload: SeasonDiagnostic, metricType: GridGraphProps["metricType"]) {
+  if (metricType === "false_onset") return Math.round(Number(payload.false_onset_probability ?? 0) * 100)
+  if (metricType === "dry_spell") return Math.round(Number(payload.dry_spell_probability ?? 0) * 100)
+  return Math.round(Number(payload.onset_probability ?? 0) * 100)
+}
+
+function formatSeason(year: number) {
+  if (!Number.isFinite(year)) return "Season"
+  return `${year}-${String(year + 1).slice(-2)}`
+}
+
+function lineColor(index: number) {
+  const colors = ["#D64545", "#2563eb", "#1F7A63", "#7c3aed", "#ca8a04", "#0f766e"]
+  return colors[index % colors.length]
+}
+
+function parseDate(value?: string | null) {
+  if (!value) return null
+  const date = new Date(value.replace(" ", "T"))
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function rainySeasonOffset(value?: string | null) {
+  const date = parseDate(value)
+  if (!date) return 0
+  const seasonStartYear = date.getMonth() + 1 <= 4 ? date.getFullYear() - 1 : date.getFullYear()
+  const seasonStart = new Date(seasonStartYear, 10, 1)
+  return Math.max(0, Math.round((date.getTime() - seasonStart.getTime()) / 86400000))
+}
+
+function monthLabelForOffset(value: number) {
+  if (value >= 151) return "Apr"
+  if (value >= 120) return "Mar"
+  if (value >= 92) return "Feb"
+  if (value >= 61) return "Jan"
+  if (value >= 30) return "Dec"
+  return "Nov"
+}
+
+function ScientificTooltip({ text }: { text: string }) {
+  return (
+    <span className="group relative inline-flex">
+      <Info className="h-4 w-4 cursor-help text-[#6b7a8d]" />
+      <span className="pointer-events-none absolute left-1/2 top-6 z-[2000] hidden w-64 -translate-x-1/2 rounded-md border border-[#d6dee8] bg-white p-3 text-[12px] font-medium leading-relaxed text-[#0F2A3D] shadow-lg group-hover:block">
+        {text}
+      </span>
+    </span>
   )
-}
-
-function toPoint(season: unknown, value: number, index: number): SeriesPoint {
-  const year = numberFromSeason(season)
-  return {
-    season: season ? String(season) : `S${index + 1}`,
-    seasonYear: year,
-    value: Math.round(value * 100),
-  }
-}
-
-function numberFromSeason(value: unknown) {
-  if (typeof value === "number") return value
-  const match = String(value ?? "").match(/\b(19|20)\d{2}\b/)
-  return match ? Number(match[0]) : null
-}
-
-function parseRange(range: string, customStart: string, customEnd: string) {
-  const start = customStart.length === 4 ? Number(customStart) : null
-  const end = customEnd.length === 4 ? Number(customEnd) : null
-  if (start || end) return { start, end }
-  if (range === "all") return { start: null, end: null }
-  const [startText, endText] = range.split("-")
-  return { start: Number(startText), end: Number(endText) }
-}
-
-function filterByRange(points: SeriesPoint[], range: string, customStart = "", customEnd = "") {
-  const { start, end } = parseRange(range, customStart, customEnd)
-  if (!start && !end) return points
-  const filtered = points.filter((point) => {
-    const year = point.seasonYear ?? numberFromSeason(point.season)
-    return year === null || ((!start || year >= start) && (!end || year <= end))
-  })
-
-  return filtered.length ? filtered : points
-}
-
-function formatShortDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
 }

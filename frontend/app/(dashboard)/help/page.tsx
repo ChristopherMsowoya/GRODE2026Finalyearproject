@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import {
   BookOpen,
   MessageSquare,
@@ -254,12 +255,13 @@ export default function HelpPage() {
                 Monday – Friday, 07:30 – 17:00 CAT
               </p>
             </div>
-            <button
-              className="mt-5 w-full rounded-xl py-3 text-[13px] font-bold transition-all hover:opacity-90 active:scale-95"
+            <Link
+              href="/support"
+              className="mt-5 flex w-full items-center justify-center rounded-xl py-3 text-[13px] font-bold transition-all hover:opacity-90 active:scale-95"
               style={{ background: "#1F7A63", color: "#fff" }}
             >
               Get Support Now
-            </button>
+            </Link>
           </div>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import "leaflet/dist/leaflet.css"
-import { Crosshair, Database, Eye, EyeOff, Loader2, Move } from "lucide-react"
+import { Database, Loader2 } from "lucide-react"
 import {
   fetchBoundaries,
   fetchDatabaseHealth,
@@ -10,7 +10,6 @@ import {
   type DatabaseHealthResponse,
   type DiagnosticLayer,
   type GeoJsonFeatureCollection,
-  type GridDiagnosticProperties,
 } from "@/lib/algorithm-api"
 import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 
@@ -83,14 +82,7 @@ export default function MapPage() {
   const [dataError, setDataError] = useState<string | null>(null)
   const [dbHealth, setDbHealth] = useState<DatabaseHealthResponse | null>(null)
   const [dataLoading, setDataLoading] = useState(true)
-  const [selectedGridInfo, setSelectedGridInfo] = useState<GridDiagnosticProperties | null>(null)
-  const [showSelectedPanel, setShowSelectedPanel] = useState(true)
-  const [panelPosition, setPanelPosition] = useState({ x: 20, y: 92 })
-  const [draggingPanel, setDraggingPanel] = useState(false)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
-  const [gpsLoading, setGpsLoading] = useState(false)
-  const [gpsError, setGpsError] = useState<string | null>(null)
 
   useEffect(() => { setIsClient(true) }, [])
 
@@ -133,10 +125,9 @@ export default function MapPage() {
         setCountryGeo(country)
         setDistrictGeo(districts)
         setGridGeo(grid)
-        const firstGrid = grid.features[0]?.properties as unknown as GridDiagnosticProperties | undefined
+        const firstGrid = grid.features[0]?.properties as { grid_id?: string } | undefined
         if (firstGrid?.grid_id) {
           selectedGridIdRef.current = firstGrid.grid_id
-          setSelectedGridInfo(firstGrid)
         }
       } catch (error) {
         if (!cancelled) setDataError(error instanceof Error ? error.message : "Failed to load grid diagnostics.")
@@ -164,7 +155,6 @@ export default function MapPage() {
       }
       selectedLayerRef.current = layer
       selectedGridIdRef.current = props.grid_id
-      setSelectedGridInfo(props)
       layer.setStyle(gridStyle(props, activeLayer, props.grid_id))
       if (openPopup) layer.openPopup()
     }
@@ -243,7 +233,6 @@ export default function MapPage() {
       }
       selectedLayerRef.current = matchedLayer
       selectedGridIdRef.current = props.grid_id
-      setSelectedGridInfo({ ...props, area_name: selectedLocation?.areaName || props.area_name })
       matchedLayer.setStyle(gridStyle(props, activeLayer, props.grid_id))
     }
   }, [activeLayer, selectedLocation])
@@ -273,67 +262,6 @@ export default function MapPage() {
 
     map.current.panTo([latitude, longitude], { animate: true })
   }, [leaflet, selectedLocation])
-
-  const locateUser = () => {
-    if (!leaflet || !map.current) return
-    if (!navigator.geolocation) {
-      setGpsError("GPS is not available in this browser.")
-      return
-    }
-
-    setGpsLoading(true)
-    setGpsError(null)
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const latitude = position.coords.latitude
-        const longitude = position.coords.longitude
-        locationMarkerRef.current?.remove()
-        const icon = leaflet.divIcon({
-          className: "",
-          html: pulseMarkerHtml(),
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        })
-        locationMarkerRef.current = leaflet
-          .marker([latitude, longitude], { icon })
-          .addTo(map.current)
-          .bindTooltip(`Your current location (${Math.round(position.coords.accuracy)} m accuracy)`, {
-            direction: "top",
-            offset: [0, -12],
-            opacity: 0.95,
-          })
-        map.current.panTo([latitude, longitude], { animate: true })
-        setGpsLoading(false)
-      },
-      (error) => {
-        setGpsError(error.message || "Could not detect your current location.")
-        setGpsLoading(false)
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
-    )
-  }
-
-  const beginPanelDrag = (event: any) => {
-    setDraggingPanel(true)
-    setDragOffset({ x: event.clientX - panelPosition.x, y: event.clientY - panelPosition.y })
-  }
-
-  useEffect(() => {
-    if (!draggingPanel) return
-    const onMove = (event: MouseEvent) => {
-      setPanelPosition({
-        x: Math.max(8, event.clientX - dragOffset.x),
-        y: Math.max(8, event.clientY - dragOffset.y),
-      })
-    }
-    const onUp = () => setDraggingPanel(false)
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    return () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-    }
-  }, [dragOffset.x, dragOffset.y, draggingPanel])
 
   return (
     <>
@@ -381,11 +309,16 @@ export default function MapPage() {
       `}</style>
 
       <div className="mb-4 rounded-xl border border-[#d8dee4] bg-white p-5">
-        <div>
-          <h1 className="text-[28px] font-extrabold leading-tight text-[#0F2A3D]">Grid-Level Rainfall Diagnostics</h1>
-          <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">
-            5km computational grid cells carry the rainfall probabilities. Districts are reference overlays only.
-          </p>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <h1 className="text-[28px] font-extrabold leading-tight text-[#0F2A3D]">Grid-Level Rainfall Diagnostics</h1>
+            <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">
+              5km computational grid cells carry the rainfall probabilities. Districts are reference overlays only.
+            </p>
+          </div>
+          <div className="w-full xl:max-w-[760px]">
+            <LocationSelector onLocationChange={setSelectedLocation} />
+          </div>
         </div>
       </div>
 
@@ -403,11 +336,7 @@ export default function MapPage() {
 
         <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
 
-        <div className="absolute left-5 top-5 z-[820] max-w-[calc(100%-2.5rem)] rounded-xl border border-white/70 bg-white/95 p-3 shadow-lg backdrop-blur">
-          <LocationSelector onLocationChange={setSelectedLocation} />
-        </div>
-
-        <div className="absolute left-5 top-[7rem] z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+        <div className="absolute left-5 top-5 z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
           {(Object.keys(LAYER_CONFIG) as DiagnosticLayer[]).map((layer) => (
             <button
               key={layer}
@@ -426,58 +355,6 @@ export default function MapPage() {
         >
           {showDistrictLabels ? "Hide Names" : "Show Names"}
         </button>
-
-        <div className="absolute right-16 top-16 z-[800] flex flex-col items-end gap-2">
-          <button
-            onClick={locateUser}
-            disabled={!leaflet || gpsLoading}
-            className="flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-lg disabled:cursor-wait disabled:text-[#94a3b8]"
-          >
-            {gpsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
-            {gpsLoading ? "Locating" : "Use GPS"}
-          </button>
-          {gpsError && (
-            <div className="max-w-[220px] rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] font-semibold text-[#b91c1c] shadow-lg">
-              {gpsError}
-            </div>
-          )}
-        </div>
-
-        {/* {selectedGridInfo && (
-          <>
-            <button
-              onClick={() => setShowSelectedPanel((value) => !value)}
-              className="absolute right-16 top-16 z-[800] flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-lg"
-            >
-              {showSelectedPanel ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              {showSelectedPanel ? "Hide Grid" : "Show Grid"}
-            </button>
-            {showSelectedPanel && (
-              <div
-                className="absolute z-[810] w-[240px] rounded-xl border border-white/70 bg-white/95 p-3 shadow-xl backdrop-blur"
-                style={{ left: panelPosition.x, top: panelPosition.y }}
-              >
-                <button
-                  onMouseDown={beginPanelDrag}
-                  className="mb-2 flex w-full cursor-move items-center justify-between rounded-lg bg-[#f8fafc] px-2 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]"
-                >
-                   Active Grid  
-                  <Move className="h-3.5 w-3.5" />
-                </button>
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Grid Number</p>
-                    <p className="text-[16px] font-extrabold text-[#0F2A3D]">{selectedGridInfo.grid_id}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Selected/Search Area</p>
-                    <p className="text-[13px] font-bold text-[#0F2A3D]">{selectedGridInfo.area_name || selectedGridInfo.district_name || "Grid cell"}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        )} */}
 
         <div className="absolute bottom-5 right-5 z-[800] flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg text-[12px] text-[#64748b]">
           <Database className="h-3.5 w-3.5" />

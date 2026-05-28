@@ -101,18 +101,18 @@ export default function FalseOnsetMap({
       div.style.cssText =
         "background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: Inter, sans-serif; font-size: 12px; min-width: 140px;"
       div.innerHTML = `
-        <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False-Onset Risk</p>
+        <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False Onset Level</p>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #e36a6a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f; font-weight: 600;">High</span>
+          <span style="color: #0d2f3f; font-weight: 600;">High risk</span>
         </div>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #facc15; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f; font-weight: 600;">Moderate</span>
+          <span style="color: #0d2f3f; font-weight: 600;">Medium risk</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #1F7A63; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f; font-weight: 600;">Low</span>
+          <span style="color: #0d2f3f; font-weight: 600;">Low risk</span>
         </div>
       `
       return div

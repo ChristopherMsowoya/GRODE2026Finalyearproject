@@ -133,6 +133,23 @@ export interface OnsetTimelineResponse {
   series: OnsetTimelinePoint[]
 }
 
+export interface OnsetTriggerEvent {
+  season: string
+  season_year: number
+  flag_date: string
+  day_offset: number
+  rainfall_3day_total: number
+  accepted_onset: boolean
+}
+
+export interface OnsetTriggerEventsResponse {
+  grid_id: string
+  start_year: number | null
+  end_year: number | null
+  season_count: number
+  events: OnsetTriggerEvent[]
+}
+
 export interface LocationHierarchyResponse {
   district_count: number
   districts: Array<{
@@ -692,6 +709,23 @@ export function fetchOnsetTimeline(gridId: string, startYear?: number | null, en
       trigger_count: 0,
       series: [],
     },
+  })
+}
+
+export function fetchOnsetTriggerEvents(gridId: string, startYear?: number | null, endYear?: number | null) {
+  const qs = new URLSearchParams({ grid_id: gridId })
+  if (startYear) qs.set("start_year", String(startYear))
+  if (endYear) qs.set("end_year", String(endYear))
+
+  return apiFetch<OnsetTriggerEventsResponse>(`/api/onset/trigger-events?${qs.toString()}`, {
+    fallback: {
+      grid_id: gridId,
+      start_year: startYear ?? null,
+      end_year: endYear ?? null,
+      season_count: 0,
+      events: [],
+    },
+    timeoutMs: 20000,
   })
 }
 

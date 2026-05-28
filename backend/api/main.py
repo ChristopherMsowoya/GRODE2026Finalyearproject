@@ -3,7 +3,10 @@ import json
 import os
 import sys
 import uuid
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from collections import Counter
+import csv
 from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 import math
@@ -71,6 +74,30 @@ from backend.src.pipeline.run_pipeline import run
 
 LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 LEGACY_DRY_INTERPRETATION_KEY = "crop_" + "stress_interpretation"
+EA_SHAPEFILE_PATH = SHAPEFILES_ROOT / "enum" / "ECHO2_prioritization.shp"
+GEONAMES_MW_PATH = PROJECT_ROOT / "backend" / "database" / "data" / "location_sources" / "MW" / "MW.txt"
+USE_LOCAL_LOCATION_API = os.environ.get("GRID_API_SOURCE", "local").lower() in {"local", "file", "files"}
+ENABLE_GOOGLE_PLACES = os.environ.get("ENABLE_GOOGLE_PLACES", "").lower() in {"1", "true", "yes"}
+GOOGLE_MAPS_API_KEY = (os.environ.get("GOOGLE_MAPS_API_KEY") or os.environ.get("GOOGLE_API_KEY")) if ENABLE_GOOGLE_PLACES else None
+
+# The HOTOSM populated-places file misses some well-known urban neighbourhood
+# names, especially Lilongwe "Area XX" names. Keep this tiny supplement local
+# so the demo does not depend on Google Places.
+CURATED_LOCATION_AREAS = [
+    {"name": "Area 18", "district": "Lilongwe", "longitude": 33.7790, "latitude": -13.9600, "place_type": "urban area"},
+    {"name": "Area 23", "district": "Lilongwe", "longitude": 33.7760, "latitude": -13.9550, "place_type": "urban area"},
+    {"name": "Area 24", "district": "Lilongwe", "longitude": 33.7870, "latitude": -13.9440, "place_type": "urban area"},
+    {"name": "Area 25", "district": "Lilongwe", "longitude": 33.7710, "latitude": -13.8730, "place_type": "urban area"},
+    {"name": "Area 36", "district": "Lilongwe", "longitude": 33.8010, "latitude": -13.9950, "place_type": "urban area"},
+    {"name": "Area 43", "district": "Lilongwe", "longitude": 33.7540, "latitude": -13.9620, "place_type": "urban area"},
+    {"name": "Area 47", "district": "Lilongwe", "longitude": 33.7460, "latitude": -13.9900, "place_type": "urban area"},
+    {"name": "Area 49", "district": "Lilongwe", "longitude": 33.7350, "latitude": -13.9760, "place_type": "urban area"},
+    {"name": "Area 50", "district": "Lilongwe", "longitude": 33.7420, "latitude": -13.9530, "place_type": "urban area"},
+    {"name": "Area 51", "district": "Lilongwe", "longitude": 33.7620, "latitude": -13.9290, "place_type": "urban area"},
+    {"name": "Area 52", "district": "Lilongwe", "longitude": 33.7810, "latitude": -13.9250, "place_type": "urban area"},
+    {"name": "Area 53", "district": "Lilongwe", "longitude": 33.7070, "latitude": -13.9300, "place_type": "urban area"},
+    {"name": "Area 58", "district": "Lilongwe", "longitude": 33.7240, "latitude": -13.9050, "place_type": "urban area"},
+]
 
 
 def dry_spell_probability(result: dict) -> float:
@@ -235,6 +262,351 @@ def nearest_grid(lon: float, lat: float, results: list[dict]) -> dict | None:
         + math.pow(float(row.get("latitude") or row.get("centroid_lat") or 0) - lat, 2),
         default=None,
     )
+
+
+def clean_code(value: object) -> str:
+    text = str(value or "").strip()
+    try:
+        number = float(text)
+        if number.is_integer():
+            return str(int(number))
+    except ValueError:
+        pass
+    if text.endswith(".00000"):
+        return text[:-6]
+    return text
+
+
+@lru_cache(maxsize=1)
+def load_local_enumeration_areas() -> list[dict]:
+    try:
+        import shapefile
+    except Exception:
+        return []
+
+    if not EA_SHAPEFILE_PATH.exists():
+        return []
+
+    reader = shapefile.Reader(str(EA_SHAPEFILE_PATH))
+    areas = []
+    for index, shape_record in enumerate(reader.iterShapeRecords()):
+        props = shape_record.record.as_dict()
+        bbox = shape_record.shape.bbox if shape_record.shape.bbox else [0, 0, 0, 0]
+        lon = (float(bbox[0]) + float(bbox[2])) / 2
+        lat = (float(bbox[1]) + float(bbox[3])) / 2
+        ea_id = clean_code(props.get("EACODE") or props.get("id") or f"ea-{index + 1}")
+        district = str(props.get("DISTRICT") or props.get("district") or "Unknown").strip()
+        ta = str(props.get("TA") or props.get("TA3_name") or "").strip()
+        areas.append({
+            "id": ea_id,
+            "ea_name": f"EA {ea_id}",
+            "ta_name": ta or None,
+            "district_name": district,
+            "longitude": lon,
+            "latitude": lat,
+        })
+
+    return areas
+
+
+def local_enumeration_districts() -> list[dict]:
+    counts = Counter(area["district_name"] for area in load_local_enumeration_areas() if area.get("district_name"))
+    valid_districts = {
+        row["district"].lower()
+        for row in build_district_summaries()
+        if row.get("district") and row["district"] != "Unknown"
+    }
+    return [
+        {"district": district, "enumeration_area_count": count}
+        for district, count in sorted(counts.items())
+        if district != "Unknown" and district.lower() in valid_districts
+    ]
+
+
+def local_enumeration_areas_for_district(district: str) -> list[dict]:
+    district_lower = district.lower()
+    areas = [
+        area for area in load_local_enumeration_areas()
+        if area.get("district_name", "").lower() == district_lower
+    ]
+    results = normalize_results(load_results())
+    district_results = [
+        row for row in results
+        if (row.get("district_name") or row.get("district") or "").lower() == district_lower
+    ] or results
+
+    rows = []
+    for area in areas:
+        diagnostic = nearest_grid(float(area["longitude"]), float(area["latitude"]), district_results)
+        rows.append({
+            "id": area["id"],
+            "ea_name": area["ea_name"],
+            "ta_name": area["ta_name"],
+            "district_name": area["district_name"],
+            "area_latitude": area["latitude"],
+            "area_longitude": area["longitude"],
+            "grid_id": str(diagnostic.get("grid_id")) if diagnostic else None,
+            "overlap_fraction": None,
+            "contains_centroid": None,
+            "intersecting_grid_count": 1 if diagnostic else 0,
+            "grid": diagnostic,
+        })
+
+    return sorted(rows, key=lambda row: row["ea_name"])
+
+
+def district_feature_for_name(district: str) -> dict | None:
+    district_lower = district.lower()
+    try:
+        for feature in load_geojson_features(str(DISTRICTS_GEOJSON_PATH)):
+            props = feature.get("properties") or {}
+            name = props.get("DISTRICT") or props.get("shapeName") or props.get("name") or ""
+            if str(name).lower() == district_lower:
+                return feature
+    except Exception:
+        return None
+    return None
+
+
+@lru_cache(maxsize=1)
+def load_geonames_location_areas() -> list[dict]:
+    if not GEONAMES_MW_PATH.exists():
+        return []
+
+    rows: list[dict] = []
+    try:
+        with GEONAMES_MW_PATH.open("r", encoding="utf-8") as geonames_file:
+            for row in csv.reader(geonames_file, delimiter="\t"):
+                if len(row) < 19:
+                    continue
+                feature_class = row[6]
+                if feature_class != "P":
+                    continue
+                name = row[1].strip()
+                if len(name) < 2:
+                    continue
+                try:
+                    latitude = float(row[4])
+                    longitude = float(row[5])
+                    population = int(row[14] or 0)
+                except ValueError:
+                    continue
+
+                rows.append({
+                    "name": name,
+                    "place_type": row[7] or "populated place",
+                    "population": population or None,
+                    "longitude": longitude,
+                    "latitude": latitude,
+                    "source": "geonames",
+                    "geoname_id": row[0],
+                })
+    except OSError:
+        return []
+
+    return rows
+
+
+@lru_cache(maxsize=1)
+def local_location_area_catalog() -> list[dict]:
+    district_features = load_geojson_features(str(DISTRICTS_GEOJSON_PATH))
+    rows: list[dict] = []
+    seen = set()
+
+    candidates = [
+        {
+            "name": place["name"],
+            "place_type": place.get("place_type") or "place",
+            "population": place.get("population"),
+            "longitude": float(place["longitude"]),
+            "latitude": float(place["latitude"]),
+            "source": "local-place",
+        }
+        for place in search_places("", 10000)
+    ]
+    candidates.extend(load_geonames_location_areas())
+    candidates.extend(
+        {
+            "name": area["name"],
+            "place_type": area["place_type"],
+            "population": None,
+            "longitude": area["longitude"],
+            "latitude": area["latitude"],
+            "district_hint": area["district"],
+            "source": "local-curated-area",
+        }
+        for area in CURATED_LOCATION_AREAS
+    )
+
+    for candidate in candidates:
+        name = str(candidate.get("name") or "").strip()
+        if len(name) < 2:
+            continue
+
+        lon = float(candidate["longitude"])
+        lat = float(candidate["latitude"])
+        district_hint = str(candidate.get("district_hint") or "").lower()
+
+        matched_district = None
+        for feature in district_features:
+            props = feature.get("properties") or {}
+            district_name = props.get("DISTRICT") or props.get("shapeName") or props.get("name")
+            if district_hint and str(district_name).lower() != district_hint:
+                continue
+            if bbox_contains(feature["_bbox"], lon, lat) and point_in_geometry(lon, lat, feature["geometry"]):
+                matched_district = str(district_name)
+                break
+
+        if not matched_district:
+            continue
+
+        key = (matched_district.lower(), name.lower(), round(lat, 5), round(lon, 5))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            **candidate,
+            "name": name,
+            "district": matched_district,
+        })
+
+    return sorted(rows, key=lambda row: (row["district"], row["name"]))
+
+
+def local_location_area_districts() -> list[dict]:
+    counts = Counter(row["district"] for row in local_location_area_catalog())
+    return [
+        {
+            "district": district["district"],
+            "enumeration_area_count": counts.get(district["district"], 0),
+        }
+        for district in build_district_summaries()
+        if district.get("district") and district["district"] != "Unknown"
+    ]
+
+
+def location_grid_payload(name: str, district: str, lon: float, lat: float, source: str, place_type: str = "place") -> dict | None:
+    district_lower = district.lower()
+    results = normalize_results(load_results())
+    district_results = [
+        row for row in results
+        if (row.get("district_name") or row.get("district") or "").lower() == district_lower
+    ] or results
+    diagnostic = nearest_grid(lon, lat, district_results)
+    if not diagnostic:
+        return None
+
+    return {
+        "id": f"{source}:{district}:{name}:{round(lat, 6)}:{round(lon, 6)}",
+        "ea_name": name,
+        "display_name": name,
+        "ta_name": name,
+        "district_name": district,
+        "area_latitude": lat,
+        "area_longitude": lon,
+        "place_type": place_type,
+        "source": source,
+        "grid_id": str(diagnostic.get("grid_id")),
+        "overlap_fraction": None,
+        "contains_centroid": None,
+        "intersecting_grid_count": 1,
+        "grid": diagnostic,
+    }
+
+
+def local_area_search(district: str, q: str, limit: int) -> list[dict]:
+    query = q.lower()
+    rows: list[dict] = []
+    seen = set()
+
+    local_candidates = [
+        area for area in local_location_area_catalog()
+        if area["district"].lower() == district.lower()
+        and (
+            query in area["name"].lower()
+            or query in str(area.get("place_type") or "").lower()
+        )
+    ]
+
+    for place in sorted(local_candidates, key=lambda row: (0 if row["name"].lower().startswith(query) else 1, row["name"])):
+        lon = float(place["longitude"])
+        lat = float(place["latitude"])
+        name = str(place["name"]).strip()
+        if not name or name.lower() in seen:
+            continue
+        payload = location_grid_payload(name, district, lon, lat, place["source"], place.get("place_type") or "place")
+        if payload:
+            payload["population"] = place.get("population")
+            rows.append(payload)
+            seen.add(name.lower())
+        if len(rows) >= limit:
+            break
+
+    return rows
+
+
+def google_places_area_search(district: str, q: str, limit: int) -> list[dict]:
+    if not GOOGLE_MAPS_API_KEY:
+        return []
+
+    district_feature = district_feature_for_name(district)
+    body: dict = {
+        "textQuery": f"{q}, {district} District, Malawi",
+        "regionCode": "MW",
+        "maxResultCount": min(max(limit, 1), 10),
+    }
+    if district_feature:
+        min_lon, min_lat, max_lon, max_lat = district_feature["_bbox"]
+        body["locationBias"] = {
+            "rectangle": {
+                "low": {"latitude": min_lat, "longitude": min_lon},
+                "high": {"latitude": max_lat, "longitude": max_lon},
+            }
+        }
+
+    request = Request(
+        "https://places.googleapis.com/v1/places:searchText",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.types",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, json.JSONDecodeError):
+        return []
+
+    rows = []
+    seen = set()
+    for place in payload.get("places", []):
+        location = place.get("location") or {}
+        lat = location.get("latitude")
+        lon = location.get("longitude")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            continue
+        if district_feature and not (
+            bbox_contains(district_feature["_bbox"], float(lon), float(lat))
+            and point_in_geometry(float(lon), float(lat), district_feature["geometry"])
+        ):
+            continue
+        name = ((place.get("displayName") or {}).get("text") or place.get("formattedAddress") or q).strip()
+        if not name or name.lower() in seen:
+            continue
+        payload_row = location_grid_payload(name, district, float(lon), float(lat), "google-places", "Google Places")
+        if payload_row:
+            payload_row["formatted_address"] = place.get("formattedAddress")
+            payload_row["google_types"] = place.get("types") or []
+            rows.append(payload_row)
+            seen.add(name.lower())
+        if len(rows) >= limit:
+            break
+
+    return rows
 
 
 class PipelineRunRequest(BaseModel):
@@ -678,22 +1050,27 @@ def get_enumeration_area_hierarchy():
 
 @app.get("/api/locations/districts")
 def get_location_districts():
-    """Return districts for the EA selector. Falls back to local grid coverage."""
-    try:
-        from backend.database.connection import fetch_all
-
-        rows = fetch_all(
-            """
-            select district_name as district, count(*) as enumeration_area_count
-            from enumeration_areas
-            group by district_name
-            order by district_name
-            """
-        )
+    """Return all districts for the location-area selector."""
+    if USE_LOCAL_LOCATION_API:
+        rows = local_location_area_districts()
         if rows:
-            return {"available": True, "district_count": len(rows), "districts": rows}
-    except Exception:
-        pass
+            return {"available": True, "district_count": len(rows), "districts": rows, "source": "local-location-catalog"}
+    else:
+        try:
+            from backend.database.connection import fetch_all
+
+            rows = fetch_all(
+                """
+                select district_name as district, count(*) as enumeration_area_count
+                from enumeration_areas
+                group by district_name
+                order by district_name
+                """
+            )
+            if rows:
+                return {"available": True, "district_count": len(rows), "districts": rows}
+        except Exception:
+            pass
 
     districts = [
         {"district": row["district"], "enumeration_area_count": 0}
@@ -711,61 +1088,106 @@ def get_location_districts():
 @app.get("/api/locations/enumeration-areas")
 def get_enumeration_areas_by_district(district: str = Query(...)):
     """Return enumeration areas for a district, including their primary mapped grid."""
-    try:
-        from backend.database.connection import fetch_all
-
-        rows = fetch_all(
-            """
-            select
-                ea.id,
-                ea.ea_name,
-                ea.ta_name,
-                ea.district_name,
-                primary_grid.grid_id,
-                primary_grid.overlap_fraction,
-                primary_grid.contains_centroid,
-                count(eagi.grid_id) as intersecting_grid_count
-            from enumeration_areas ea
-            left join lateral (
-                select grid_id, overlap_fraction, contains_centroid
-                from enumeration_area_grid_intersections eagi2
-                where eagi2.enumeration_area_id = ea.id
-                order by contains_centroid desc, overlap_fraction desc
-                limit 1
-            ) primary_grid on true
-            left join enumeration_area_grid_intersections eagi
-                on eagi.enumeration_area_id = ea.id
-            where lower(ea.district_name) = lower(%(district)s)
-            group by ea.id, ea.ea_name, ea.ta_name, ea.district_name,
-                     primary_grid.grid_id, primary_grid.overlap_fraction, primary_grid.contains_centroid
-            order by ea.ea_name
-            """,
-            {"district": district},
-        )
-    except Exception:
+    if USE_LOCAL_LOCATION_API:
+        areas = local_enumeration_areas_for_district(district)
         return {
-            "available": False,
+            "available": bool(areas),
             "district": district,
-            "enumeration_area_count": 0,
-            "enumeration_areas": [],
-            "detail": "Enumeration-area geometry has not been loaded.",
+            "enumeration_area_count": len(areas),
+            "enumeration_areas": areas,
+            "source": "local-shapefile",
+        }
+    else:
+        try:
+            from backend.database.connection import fetch_all
+
+            rows = fetch_all(
+                """
+                select
+                    ea.id,
+                    ea.ea_name,
+                    ea.ta_name,
+                    ea.district_name,
+                    ST_Y(ST_PointOnSurface(ea.geom)) as area_latitude,
+                    ST_X(ST_PointOnSurface(ea.geom)) as area_longitude,
+                    primary_grid.grid_id,
+                    primary_grid.overlap_fraction,
+                    primary_grid.contains_centroid,
+                    count(eagi.grid_id) as intersecting_grid_count
+                from enumeration_areas ea
+                left join lateral (
+                    select grid_id, overlap_fraction, contains_centroid
+                    from enumeration_area_grid_intersections eagi2
+                    where eagi2.enumeration_area_id = ea.id
+                    order by contains_centroid desc, overlap_fraction desc
+                    limit 1
+                ) primary_grid on true
+                left join enumeration_area_grid_intersections eagi
+                    on eagi.enumeration_area_id = ea.id
+                where lower(ea.district_name) = lower(%(district)s)
+                group by ea.id, ea.ea_name, ea.ta_name, ea.district_name,
+                         ea.geom,
+                         primary_grid.grid_id, primary_grid.overlap_fraction, primary_grid.contains_centroid
+                order by ea.ea_name
+                """,
+                {"district": district},
+            )
+        except Exception:
+            return {
+                "available": False,
+                "district": district,
+                "enumeration_area_count": 0,
+                "enumeration_areas": [],
+                "detail": "Enumeration-area geometry has not been loaded.",
+            }
+
+        results = normalize_results(load_results())
+        by_grid = {str(row.get("grid_id")): row for row in results}
+        areas = []
+        for row in rows:
+            diagnostic = by_grid.get(str(row.get("grid_id"))) if row.get("grid_id") else None
+            areas.append({
+                **row,
+                "grid": diagnostic,
+            })
+
+        return {
+            "available": True,
+            "district": district,
+            "enumeration_area_count": len(areas),
+            "enumeration_areas": areas,
         }
 
-    results = normalize_results(load_results())
-    by_grid = {str(row.get("grid_id")): row for row in results}
-    areas = []
-    for row in rows:
-        diagnostic = by_grid.get(str(row.get("grid_id"))) if row.get("grid_id") else None
-        areas.append({
-            **row,
-            "grid": diagnostic,
-        })
+
+@app.get("/api/locations/area-search")
+def search_areas_in_district(
+    district: str = Query(...),
+    q: str = Query(..., min_length=2),
+    limit: int = Query(default=10, ge=1, le=20),
+):
+    """Search named areas in a selected district, using Google Places when configured and local data as fallback."""
+    google_rows = google_places_area_search(district, q, limit)
+    local_rows = local_area_search(district, q, limit)
+
+    rows = []
+    seen = set()
+    for row in [*google_rows, *local_rows]:
+        key = (str(row.get("display_name") or row.get("ea_name") or "").lower(), row.get("grid_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row)
+        if len(rows) >= limit:
+            break
 
     return {
-        "available": True,
+        "available": bool(rows),
         "district": district,
-        "enumeration_area_count": len(areas),
-        "enumeration_areas": areas,
+        "query": q,
+        "google_enabled": bool(GOOGLE_MAPS_API_KEY),
+        "source": "google-places+local" if google_rows else "local",
+        "enumeration_area_count": len(rows),
+        "enumeration_areas": rows,
     }
 
 

@@ -167,12 +167,6 @@ export default function SignInPage() {
             </button>
           </form>
 
-          <p className="mt-8 text-center text-[13.5px]" style={{ color: "#6b7a8d" }}>
-            Don&apos;t have an account?{" "}
-            <Link href="/create-account" className="font-semibold hover:underline" style={{ color: "#1F7A63" }}>
-              Create an account
-            </Link>
-          </p>
         </div>
     </div>
   )

@@ -123,12 +123,11 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
       const div = L.DomUtil.create("div", "map-legend")
       div.style.cssText = "background:white;padding:12px 16px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-family:Inter,sans-serif;font-size:12px;min-width:190px;"
       div.innerHTML = `
-        <p style="margin:0 0 8px 0;font-weight:800;color:#0d2f3f;font-size:11px;text-transform:uppercase;letter-spacing:.08em;">Dry Spell Probability</p>
+        <p style="margin:0 0 8px 0;font-weight:800;color:#0d2f3f;font-size:11px;text-transform:uppercase;letter-spacing:.08em;">Dry Spell Level</p>
         ${LEGEND.map((bin) => `
           <div style="margin-bottom:6px;display:flex;align-items:center;gap:7px;">
             <span style="display:inline-block;width:18px;height:12px;border-radius:3px;background:${bin.color};border:1px solid rgba(0,0,0,.12);"></span>
-            <span style="color:#0d2f3f;font-weight:600;">${bin.min}% - ${bin.max}%</span>
-            <span style="color:#64748b;">${bin.label}</span>
+            <span style="color:#0d2f3f;font-weight:600;">${bin.label}</span>
           </div>
         `).join("")}
       `

@@ -1,9 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import Image from "next/image"
-import Link from "next/link"
-import { Activity, Database, Grid3X3, MapPinned, Radio } from "lucide-react"
+import { Database, Grid3X3, MapPinned } from "lucide-react"
 import { fetchDashboardOverview, fetchDistrictSummary, type DashboardOverview } from "@/lib/algorithm-api"
 
 function MetricTile({
@@ -69,10 +67,6 @@ export default function DashboardPage() {
       <section className="grid gap-6">
         <div className="flex min-h-[360px] flex-col justify-between rounded-lg border border-[#e2e8f0] bg-white p-6 shadow-sm md:p-8">
           <div>
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-[#166534]">
-              <Radio className="h-3.5 w-3.5" />
-              ALGORITHM'S LIVE
-            </div>
             <h1 className="max-w-2xl text-[34px] font-black leading-tight text-[#0F2A3D] md:text-[44px]">
               <span className="block">GRODE</span>
               <span className="mt-1 block text-[18px] font-extrabold text-[#607086] md:text-[24px]">
@@ -139,17 +133,6 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* <section className="rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm"> 
-        <div className="flex flex-col gap-3">
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">System State</p>
-          </div>
-          <div className="inline-flex w-fit items-center gap-2 rounded-full border border-[#bbf7d0] bg-[#f0fdf4] px-3 py-1.5 text-[12px] font-bold text-[#166534]">
-            <span className={`h-2 w-2 rounded-full ${liveStatus === "live" ? "animate-pulse bg-[#22c55e]" : "bg-[#94a3b8]"}`} />
-            ACTIVE ALGORITHM LIVE
-          </div>
-        </div>
-      </section>*/}
     </div>
   )
 }
