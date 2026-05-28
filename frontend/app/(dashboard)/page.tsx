@@ -74,7 +74,7 @@ export default function DashboardPage() {
               ACTIVE ALGORITHM LIVE
             </div>
             <h1 className="max-w-2xl text-[34px] font-black leading-tight text-[#0F2A3D] md:text-[44px]">
-              GRODE Grid-Level Rainfall Detection Engine
+              Grid-Level Rainfall Onset Detection Engine (GRODE)
             </h1>
             <p className="mt-4 max-w-xl text-[15px] font-medium leading-relaxed text-[#607086]">
               Scientific climate intelligence for Malawi built from CHIRPS rainfall diagnostics,
