@@ -20,6 +20,15 @@ function getOnsetColor(prob: number): string {
   return "#e36a6a"               // Low - Red
 }
 
+function pulseMarkerHtml() {
+  return `
+    <div class="gps-pulse-marker">
+      <span class="gps-pulse-ring"></span>
+      <span class="gps-pulse-dot"></span>
+    </div>
+  `
+}
+
 export default function OnsetMap({
   selectedLocation,
   onLocationChange,
@@ -35,6 +44,7 @@ export default function OnsetMap({
   const legendRef = useRef<L.Control<any> | null>(null)
   const statusControlRef = useRef<L.Control<any> | null>(null)
   const boundsGeojsonRef = useRef<L.GeoJSON | null>(null)
+  const locationMarkerRef = useRef<L.Marker | null>(null)
 
   useEffect(() => {
     setIsClient(true)
@@ -137,13 +147,32 @@ export default function OnsetMap({
     }
   }, [apiStatus])
 
-  // Map zooming effect when selection changes
+  // Area pointer effect when selection changes
   useEffect(() => {
     if (!map.current || !selectedLocation) return
     
     if (selectedLocation.gridData?.latitude && selectedLocation.gridData?.longitude) {
-      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 12, { animate: true })
-      return
+      const latitude = Number(selectedLocation.gridData.area_latitude ?? selectedLocation.gridData.latitude)
+      const longitude = Number(selectedLocation.gridData.area_longitude ?? selectedLocation.gridData.longitude)
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
+
+      locationMarkerRef.current?.remove()
+      locationMarkerRef.current = L.marker([latitude, longitude], {
+        icon: L.divIcon({
+          className: "",
+          html: pulseMarkerHtml(),
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        }),
+      })
+        .addTo(map.current)
+        .bindTooltip(selectedLocation.areaName || "Selected area", {
+          direction: "top",
+          offset: [0, -12],
+          opacity: 0.95,
+        })
+
+      map.current.panTo([latitude, longitude], { animate: true })
     }
   }, [selectedLocation])
 
@@ -161,6 +190,7 @@ export default function OnsetMap({
 
     async function drawGridCells() {
       try {
+        const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
         const country = await fetchBoundaries("country", true)
         if (map.current && country && country.features && country.features.length) {
           const outline = L.geoJSON(country, {
@@ -188,7 +218,6 @@ export default function OnsetMap({
           }).addTo(map.current)
           districtLayers.current.set('districts-overlay', districtLayer as any)
 
-          const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
           if (!selectedLocation?.gridData) {
             const matchedFeature = districts.features.find((f: any) => {
               const name = f.properties?.DISTRICT || f.properties?.shapeName || f.properties?.name || ''
@@ -203,7 +232,7 @@ export default function OnsetMap({
           }
         }
 
-        const grid = await fetchGridDiagnostics({ limit: 12000, source_grid: 'esri_5km_v1' })
+        const grid = await fetchGridDiagnostics({ limit: 2500, source_grid: 'esri_5km_v1', district: activeDistrict })
         if (!map.current) return
 
         const gridLayer = L.geoJSON(grid as any, {
@@ -317,6 +346,21 @@ export default function OnsetMap({
           letter-spacing: 0.04em;
           box-shadow: 0 1px 8px rgba(15,42,61,0.18);
           padding: 2px 7px;
+        }
+        .gps-pulse-marker { position: relative; width: 24px; height: 24px; }
+        .gps-pulse-dot {
+          position: absolute; left: 8px; top: 8px; width: 8px; height: 8px;
+          border-radius: 999px; background: #D64545; border: 2px solid #ffffff;
+          box-shadow: 0 2px 8px rgba(15, 42, 61, 0.25);
+        }
+        .gps-pulse-ring {
+          position: absolute; left: 2px; top: 2px; width: 20px; height: 20px;
+          border-radius: 999px; background: rgba(214, 69, 69, 0.28);
+          animation: gpsPulse 1.25s ease-out infinite;
+        }
+        @keyframes gpsPulse {
+          0% { transform: scale(0.65); opacity: 0.95; }
+          100% { transform: scale(1.8); opacity: 0; }
         }
       `}</style>
     </div>

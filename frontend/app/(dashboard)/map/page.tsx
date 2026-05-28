@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import "leaflet/dist/leaflet.css"
-import { Database, Eye, EyeOff, Loader2, Move } from "lucide-react"
+import { Crosshair, Database, Eye, EyeOff, Loader2, Move } from "lucide-react"
 import {
   fetchBoundaries,
   fetchDatabaseHealth,
@@ -52,6 +52,15 @@ function gridStyle(props: Record<string, any>, layer: DiagnosticLayer, selectedG
   }
 }
 
+function pulseMarkerHtml() {
+  return `
+    <div class="gps-pulse-marker">
+      <span class="gps-pulse-ring"></span>
+      <span class="gps-pulse-dot"></span>
+    </div>
+  `
+}
+
 export default function MapPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<any>(null)
@@ -60,6 +69,7 @@ export default function MapPage() {
   const districtLayerRef = useRef<any>(null)
   const legendRef = useRef<any>(null)
   const selectedLayerRef = useRef<any>(null)
+  const locationMarkerRef = useRef<any>(null)
   const selectedGridIdRef = useRef<string | null>(null)
   const [leaflet, setLeaflet] = useState<any>(null)
 
@@ -79,6 +89,8 @@ export default function MapPage() {
   const [draggingPanel, setDraggingPanel] = useState(false)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
+  const [gpsLoading, setGpsLoading] = useState(false)
+  const [gpsError, setGpsError] = useState<string | null>(null)
 
   useEffect(() => { setIsClient(true) }, [])
 
@@ -107,13 +119,14 @@ export default function MapPage() {
     if (!isClient) return
     let cancelled = false
     async function loadMapData() {
+      const activeDistrict = selectedLocation?.district || "Lilongwe"
       setDataLoading(true)
       try {
         const [health, country, districts, grid] = await Promise.all([
           fetchDatabaseHealth(),
           fetchBoundaries("country", true),
           fetchBoundaries("districts", true),
-          fetchGridDiagnostics({ limit: 12000, source_grid: "esri_5km_v1" }),
+          fetchGridDiagnostics({ limit: 2500, source_grid: "esri_5km_v1", district: activeDistrict }),
         ])
         if (cancelled) return
         setDbHealth(health)
@@ -133,7 +146,7 @@ export default function MapPage() {
     }
     void loadMapData()
     return () => { cancelled = true }
-  }, [isClient])
+  }, [isClient, selectedLocation?.district])
 
   useEffect(() => {
     if (!isClient || !leaflet || !map.current) return
@@ -232,12 +245,73 @@ export default function MapPage() {
       selectedGridIdRef.current = props.grid_id
       setSelectedGridInfo({ ...props, area_name: selectedLocation?.areaName || props.area_name })
       matchedLayer.setStyle(gridStyle(props, activeLayer, props.grid_id))
-      map.current.fitBounds(matchedLayer.getBounds(), { maxZoom: 11, padding: [28, 28] })
-      matchedLayer.openPopup()
-    } else if (selectedLocation?.gridData?.latitude && selectedLocation?.gridData?.longitude) {
-      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 11)
     }
   }, [activeLayer, selectedLocation])
+
+  useEffect(() => {
+    if (!leaflet || !map.current || !selectedLocation?.gridData) return
+
+    const latitude = Number(selectedLocation.gridData.area_latitude ?? selectedLocation.gridData.latitude)
+    const longitude = Number(selectedLocation.gridData.area_longitude ?? selectedLocation.gridData.longitude)
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || (latitude === 0 && longitude === 0)) return
+
+    locationMarkerRef.current?.remove()
+    const icon = leaflet.divIcon({
+      className: "",
+      html: pulseMarkerHtml(),
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    })
+    locationMarkerRef.current = leaflet
+      .marker([latitude, longitude], { icon })
+      .addTo(map.current)
+      .bindTooltip(selectedLocation.areaName || selectedLocation.gridData.area_name || "Selected area", {
+        direction: "top",
+        offset: [0, -12],
+        opacity: 0.95,
+      })
+
+    map.current.panTo([latitude, longitude], { animate: true })
+  }, [leaflet, selectedLocation])
+
+  const locateUser = () => {
+    if (!leaflet || !map.current) return
+    if (!navigator.geolocation) {
+      setGpsError("GPS is not available in this browser.")
+      return
+    }
+
+    setGpsLoading(true)
+    setGpsError(null)
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const latitude = position.coords.latitude
+        const longitude = position.coords.longitude
+        locationMarkerRef.current?.remove()
+        const icon = leaflet.divIcon({
+          className: "",
+          html: pulseMarkerHtml(),
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        })
+        locationMarkerRef.current = leaflet
+          .marker([latitude, longitude], { icon })
+          .addTo(map.current)
+          .bindTooltip(`Your current location (${Math.round(position.coords.accuracy)} m accuracy)`, {
+            direction: "top",
+            offset: [0, -12],
+            opacity: 0.95,
+          })
+        map.current.panTo([latitude, longitude], { animate: true })
+        setGpsLoading(false)
+      },
+      (error) => {
+        setGpsError(error.message || "Could not detect your current location.")
+        setGpsLoading(false)
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+    )
+  }
 
   const beginPanelDrag = (event: any) => {
     setDraggingPanel(true)
@@ -273,6 +347,36 @@ export default function MapPage() {
           color: white; font-family: Inter, sans-serif;
           font-size: 10px; font-weight: 800; letter-spacing: 0.04em;
           box-shadow: 0 1px 8px rgba(15,42,61,0.18); padding: 2px 7px;
+        }
+        .gps-pulse-marker {
+          position: relative;
+          width: 24px;
+          height: 24px;
+        }
+        .gps-pulse-dot {
+          position: absolute;
+          left: 8px;
+          top: 8px;
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: #D64545;
+          border: 2px solid #ffffff;
+          box-shadow: 0 2px 8px rgba(15, 42, 61, 0.25);
+        }
+        .gps-pulse-ring {
+          position: absolute;
+          left: 2px;
+          top: 2px;
+          width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          background: rgba(214, 69, 69, 0.28);
+          animation: gpsPulse 1.25s ease-out infinite;
+        }
+        @keyframes gpsPulse {
+          0% { transform: scale(0.65); opacity: 0.95; }
+          100% { transform: scale(1.8); opacity: 0; }
         }
       `}</style>
 
@@ -323,7 +427,23 @@ export default function MapPage() {
           {showDistrictLabels ? "Hide Names" : "Show Names"}
         </button>
 
-        {selectedGridInfo && (
+        <div className="absolute right-16 top-16 z-[800] flex flex-col items-end gap-2">
+          <button
+            onClick={locateUser}
+            disabled={!leaflet || gpsLoading}
+            className="flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-lg disabled:cursor-wait disabled:text-[#94a3b8]"
+          >
+            {gpsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
+            {gpsLoading ? "Locating" : "Use GPS"}
+          </button>
+          {gpsError && (
+            <div className="max-w-[220px] rounded-lg border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[11px] font-semibold text-[#b91c1c] shadow-lg">
+              {gpsError}
+            </div>
+          )}
+        </div>
+
+        {/* {selectedGridInfo && (
           <>
             <button
               onClick={() => setShowSelectedPanel((value) => !value)}
@@ -341,7 +461,7 @@ export default function MapPage() {
                   onMouseDown={beginPanelDrag}
                   className="mb-2 flex w-full cursor-move items-center justify-between rounded-lg bg-[#f8fafc] px-2 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]"
                 >
-                  Active Grid
+                   Active Grid  
                   <Move className="h-3.5 w-3.5" />
                 </button>
                 <div className="space-y-2">
@@ -357,7 +477,7 @@ export default function MapPage() {
               </div>
             )}
           </>
-        )}
+        )} */}
 
         <div className="absolute bottom-5 right-5 z-[800] flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg text-[12px] text-[#64748b]">
           <Database className="h-3.5 w-3.5" />

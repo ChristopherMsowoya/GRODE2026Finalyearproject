@@ -161,8 +161,14 @@ export interface LocationDistrictsResponse {
 export interface EnumerationAreaOption {
   id: string
   ea_name: string
+  display_name?: string | null
   ta_name: string | null
   district_name: string
+  area_latitude?: number | null
+  area_longitude?: number | null
+  source?: string | null
+  place_type?: string | null
+  formatted_address?: string | null
   grid_id: string | null
   overlap_fraction: number | null
   contains_centroid: boolean | null
@@ -555,6 +561,15 @@ export function fetchEnumerationAreas(district: string, signal?: AbortSignal) {
   })
 }
 
+export function searchAreasInDistrict(district: string, q: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ district, q, limit: "10" })
+  return apiFetch<EnumerationAreasResponse>(`/api/locations/area-search?${params.toString()}`, {
+    fallback: EMPTY_ENUMERATION_AREAS(district),
+    signal,
+    timeoutMs: 9000,
+  })
+}
+
 export function fetchTaGrids(district: string, ta: string, signal?: AbortSignal) {
   const params = new URLSearchParams({
     district,
@@ -597,12 +612,13 @@ export function fetchGridCells(params?: { limit?: number; offset?: number; sourc
   return apiFetch<any>(path, { fallback: EMPTY_FEATURE_COLLECTION }).then(normalizeGeoJsonCollection)
 }
 
-export function fetchGridDiagnostics(params?: { limit?: number; offset?: number; source_grid?: string }) {
+export function fetchGridDiagnostics(params?: { limit?: number; offset?: number; source_grid?: string; district?: string }) {
   const qs = new URLSearchParams()
 
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   if (params?.source_grid) qs.set('source_grid', params.source_grid)
+  if (params?.district) qs.set('district', params.district)
 
   const path = `/api/grid/diagnostic-cells${qs.toString() ? `?${qs.toString()}` : ''}`
   return cachePromise(
