@@ -1,0 +1,19 @@
+▲ Next.js 16.2.0 (Turbopack)
+- Local:         http://127.0.0.1:3000
+- Network:       http://127.0.0.1:3000
+- Environments: .env.local
+✓ Ready in 3.3s
+Creating turbopack project {
+  dir: 'C:\\Users\\DAKAR\\Desktop\\GRODE1\\GRODE2026Finalyearproject\\frontend',
+  testMode: true
+}
+○ Compiling middleware ...
+
+○ Compiling /sign-in ...
+✓ Finished writing to filesystem cache in 15.2s
+ GET /sign-in 200 in 3.0s (next.js: 120ms, proxy.ts: 24ms, application-code: 2.9s)
+○ Compiling / ...
+ GET / 200 in 28.2s (next.js: 27.0s, proxy.ts: 10ms, application-code: 1132ms)
+✓ Finished writing to filesystem cache in 14.3s
+✓ Finished filesystem cache database compaction in 35.8s
+ GET / 200 in 1123ms (next.js: 41ms, proxy.ts: 14ms, application-code: 1067ms)
