@@ -1,207 +1,369 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
-import dynamic from "next/dynamic"
-import Link from "next/link"
-import { Plus, Minus, Layers, Navigation2, TrendingUp, X, History } from "lucide-react"
-import type { Map as LeafletMap, Layer, PathOptions } from "leaflet"
-import malawiDistricts from "@/lib/data/malawiDistricts.json"
+import { useEffect, useRef, useState } from "react"
+import "leaflet/dist/leaflet.css"
+import { Database, Eye, EyeOff, Loader2, Move } from "lucide-react"
+import {
+  fetchBoundaries,
+  fetchDatabaseHealth,
+  fetchGridDiagnostics,
+  type DatabaseHealthResponse,
+  type DiagnosticLayer,
+  type GeoJsonFeatureCollection,
+  type GridDiagnosticProperties,
+} from "@/lib/algorithm-api"
+import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 
-const MapContainer = dynamic(() => import("react-leaflet").then(m => m.MapContainer), { ssr: false })
-const TileLayer    = dynamic(() => import("react-leaflet").then(m => m.TileLayer),    { ssr: false })
-const GeoJSON      = dynamic(() => import("react-leaflet").then(m => m.GeoJSON),      { ssr: false })
-
-interface DistrictProps {
-  name:          string
-  riskLevel:     "optimal" | "caution" | "alert"
-  cropStress:    string
-  soilMoisture:  number
-  forecastOnset: string
+const LAYER_CONFIG: Record<DiagnosticLayer, { label: string; shortLabel: string; color: string }> = {
+  onset: { label: "Onset Probability", shortLabel: "Onset", color: "#1F7A63" },
+  false_onset: { label: "False-Onset Probability", shortLabel: "False-Onset", color: "#D64545" },
+  dry_spell: { label: "Dry Spell Probability", shortLabel: "Dry Spell", color: "#2563eb" },
 }
 
-const RISK_COLORS = {
-  optimal: { fill: "#1F7A63", hover: "#17634f", stroke: "#eab308" },
-  caution: { fill: "#d97706", hover: "#b45309", stroke: "#eab308" },
-  alert:   { fill: "#D64545", hover: "#b53030", stroke: "#eab308" },
+function getColorForLayer(prob: number, layer: DiagnosticLayer): string {
+  if (layer === "onset") {
+    if (prob > 0.60) return "#1F7A63"
+    if (prob > 0.30) return "#facc15"
+    return "#e36a6a"
+  }
+  if (prob > 0.60) return "#e36a6a"
+  if (prob > 0.30) return "#facc15"
+  return "#1F7A63"
 }
 
-function getStyle(riskLevel: string, hovered = false): PathOptions {
-  const c = RISK_COLORS[riskLevel as keyof typeof RISK_COLORS] || RISK_COLORS.optimal
-  return { fillColor: hovered ? c.hover : c.fill, color: c.stroke, weight: hovered ? 2.5 : 1.5, opacity: 1, fillOpacity: hovered ? 0.78 : 0.60 }
+function percent(value?: number | null) {
+  return typeof value === "number" && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "-"
 }
-function riskLabel(r: string) { return r === "optimal" ? "Optimal" : r === "caution" ? "Caution" : "Alert" }
-function riskTextColor(r: string) { return r === "optimal" ? "#1F7A63" : r === "caution" ? "#d97706" : "#D64545" }
+
+function probabilityForLayer(props: Record<string, any>, layer: DiagnosticLayer) {
+  if (layer === "false_onset") return Number(props.false_onset_probability ?? 0)
+  if (layer === "dry_spell") return Number(props.dry_spell_probability ?? 0)
+  return Number(props.onset_probability ?? 0)
+}
+
+function gridStyle(props: Record<string, any>, layer: DiagnosticLayer, selectedGridId: string | null) {
+  const isSelected = selectedGridId === props.grid_id
+  return {
+    fillColor: getColorForLayer(probabilityForLayer(props, layer), layer),
+    color: isSelected ? "#ffffff" : "#334155",
+    weight: isSelected ? 1.8 : 0.28,
+    opacity: isSelected ? 1 : 0.5,
+    fillOpacity: isSelected ? 0.92 : 0.68,
+  }
+}
 
 export default function MapPage() {
-  const mapRef = useRef<LeafletMap | null>(null)
-  const [selectedDistrict, setSelectedDistrict] = useState<DistrictProps>({
-    name: "Lilongwe Central", riskLevel: "optimal", cropStress: "Low", soilMoisture: 68, forecastOnset: "Nov 14",
-  })
-  const [hoveredName,  setHoveredName]  = useState<string | null>(null)
-  const [cardVisible,  setCardVisible]  = useState(true)
-  const [layerStyle,   setLayerStyle]   = useState<"terrain" | "satellite" | "street">("terrain")
+  const mapContainer = useRef<HTMLDivElement>(null)
+  const map = useRef<any>(null)
+  const gridLayerRef = useRef<any>(null)
+  const countryLayerRef = useRef<any>(null)
+  const districtLayerRef = useRef<any>(null)
+  const legendRef = useRef<any>(null)
+  const selectedLayerRef = useRef<any>(null)
+  const selectedGridIdRef = useRef<string | null>(null)
+  const [leaflet, setLeaflet] = useState<any>(null)
 
-  const TILES = {
-    terrain:   { url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",     attr: "© OpenTopoMap" },
-    satellite: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr: "Esri" },
-    street:    { url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",   attr: "© OpenStreetMap" },
+  const [activeLayer, setActiveLayer] = useState<DiagnosticLayer>("onset")
+  const [isClient, setIsClient] = useState(false)
+  const [gridGeo, setGridGeo] = useState<GeoJsonFeatureCollection | null>(null)
+  const [countryGeo, setCountryGeo] = useState<GeoJsonFeatureCollection | null>(null)
+  const [districtGeo, setDistrictGeo] = useState<GeoJsonFeatureCollection | null>(null)
+
+  const [showDistrictLabels, setShowDistrictLabels] = useState(true)
+  const [dataError, setDataError] = useState<string | null>(null)
+  const [dbHealth, setDbHealth] = useState<DatabaseHealthResponse | null>(null)
+  const [dataLoading, setDataLoading] = useState(true)
+  const [selectedGridInfo, setSelectedGridInfo] = useState<GridDiagnosticProperties | null>(null)
+  const [showSelectedPanel, setShowSelectedPanel] = useState(true)
+  const [panelPosition, setPanelPosition] = useState({ x: 20, y: 92 })
+  const [draggingPanel, setDraggingPanel] = useState(false)
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
+
+  useEffect(() => { setIsClient(true) }, [])
+
+  useEffect(() => {
+    if (!isClient) return
+    let cancelled = false
+    import("leaflet").then((module) => {
+      if (!cancelled) setLeaflet(module.default)
+    })
+    return () => { cancelled = true }
+  }, [isClient])
+
+  useEffect(() => {
+    if (!isClient || !leaflet || !mapContainer.current || map.current) return
+    map.current = leaflet.map(mapContainer.current, {
+      center: [-13.5, 34.2],
+      zoom: 7,
+      zoomControl: false,
+      attributionControl: false,
+      preferCanvas: true,
+    })
+    leaflet.control.zoom({ position: "topright" }).addTo(map.current)
+  }, [isClient, leaflet])
+
+  useEffect(() => {
+    if (!isClient) return
+    let cancelled = false
+    async function loadMapData() {
+      setDataLoading(true)
+      try {
+        const [health, country, districts, grid] = await Promise.all([
+          fetchDatabaseHealth(),
+          fetchBoundaries("country", true),
+          fetchBoundaries("districts", true),
+          fetchGridDiagnostics({ limit: 12000, source_grid: "esri_5km_v1" }),
+        ])
+        if (cancelled) return
+        setDbHealth(health)
+        setCountryGeo(country)
+        setDistrictGeo(districts)
+        setGridGeo(grid)
+        const firstGrid = grid.features[0]?.properties as unknown as GridDiagnosticProperties | undefined
+        if (firstGrid?.grid_id) {
+          selectedGridIdRef.current = firstGrid.grid_id
+          setSelectedGridInfo(firstGrid)
+        }
+      } catch (error) {
+        if (!cancelled) setDataError(error instanceof Error ? error.message : "Failed to load grid diagnostics.")
+      } finally {
+        if (!cancelled) setDataLoading(false)
+      }
+    }
+    void loadMapData()
+    return () => { cancelled = true }
+  }, [isClient])
+
+  useEffect(() => {
+    if (!isClient || !leaflet || !map.current) return
+    gridLayerRef.current?.remove()
+    countryLayerRef.current?.remove()
+    districtLayerRef.current?.remove()
+    legendRef.current?.remove()
+    selectedLayerRef.current = null
+
+    if (!countryGeo || !districtGeo || !gridGeo) return
+
+    const selectLayer = (layer: any, props: any, openPopup = false) => {
+      if (selectedLayerRef.current && selectedLayerRef.current !== layer) {
+        gridLayerRef.current?.resetStyle(selectedLayerRef.current)
+      }
+      selectedLayerRef.current = layer
+      selectedGridIdRef.current = props.grid_id
+      setSelectedGridInfo(props)
+      layer.setStyle(gridStyle(props, activeLayer, props.grid_id))
+      if (openPopup) layer.openPopup()
+    }
+
+    gridLayerRef.current = leaflet.geoJSON(gridGeo as any, {
+      renderer: leaflet.canvas({ padding: 0.35 }),
+      style: (feature: any) => {
+        const props = (feature?.properties || {}) as any
+        return gridStyle(props, activeLayer, selectedGridIdRef.current)
+      },
+      onEachFeature: (feature: any, layer: any) => {
+        const props = feature.properties || {}
+        const prob = probabilityForLayer(props, activeLayer)
+        layer.bindTooltip(`Grid ${props.grid_id}: ${percent(prob)}`, { sticky: true })
+        layer.bindPopup(`
+          <div style="font-family:Inter,sans-serif;min-width:220px;color:#0f2a3d">
+            <strong>Grid: ${props.grid_id}</strong><br/>
+            <span style="color:#64748b">District:</span> <strong>${props.district_name || "Unknown"}</strong><br/>
+            <span style="color:#64748b">Onset Probability:</span> ${percent(props.onset_probability)}<br/>
+            <span style="color:#64748b">False Onset Probability:</span> ${percent(props.false_onset_probability)}<br/>
+            <span style="color:#64748b">Dry Spell Probability:</span> ${percent(props.dry_spell_probability)}
+          </div>
+        `)
+        layer.on({
+          mouseover: (event: any) => { event.target.setStyle({ weight: 1.6, fillOpacity: 0.95 }) },
+          mouseout: (event: any) => { gridLayerRef.current?.resetStyle(event.target) },
+          click: () => {
+            selectLayer(layer, props)
+          },
+        })
+      },
+    }).addTo(map.current)
+
+    districtLayerRef.current = leaflet.geoJSON(districtGeo as any, {
+      style: { color: "#111827", weight: 1.1, fillOpacity: 0, opacity: 0.85, dashArray: "3,4" },
+      interactive: false,
+      onEachFeature: (feature: any, layer: any) => {
+        const distName = feature.properties?.DISTRICT || feature.properties?.shapeName || feature.properties?.name || "District"
+        if (showDistrictLabels) layer.bindTooltip(distName, { permanent: true, direction: "center", className: "district-map-label" })
+      },
+    }).addTo(map.current)
+
+    countryLayerRef.current = leaflet.geoJSON(countryGeo as any, {
+      style: { color: "#0b3a4a", weight: 2.8, fillOpacity: 0 },
+      interactive: false,
+    }).addTo(map.current)
+
+    legendRef.current = (leaflet.control as any)({ position: "bottomleft" })
+    legendRef.current!.onAdd = () => {
+      const div = leaflet.DomUtil.create("div")
+      div.style.cssText = "background:white;padding:10px 14px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-family:Inter,sans-serif;font-size:11px;min-width:130px;"
+      div.innerHTML = `
+        <p style="margin:0 0 7px 0;font-weight:800;color:#0d2f3f;text-transform:uppercase;letter-spacing:.06em;font-size:10px;">${LAYER_CONFIG[activeLayer].label}</p>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;"><span style="width:16px;height:10px;border-radius:2px;background:#1F7A63;display:inline-block;"></span><span style="color:#0d2f3f;font-weight:600;">Low risk</span></div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;"><span style="width:16px;height:10px;border-radius:2px;background:#facc15;display:inline-block;"></span><span style="color:#0d2f3f;font-weight:600;">Moderate risk</span></div>
+        <div style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:10px;border-radius:2px;background:#e36a6a;display:inline-block;"></span><span style="color:#0d2f3f;font-weight:600;">High risk</span></div>
+      `
+      return div
+    }
+    legendRef.current!.addTo(map.current)
+  }, [isClient, leaflet, countryGeo, districtGeo, gridGeo, activeLayer, showDistrictLabels])
+
+  useEffect(() => {
+    const gridId = String(selectedLocation?.grid || "")
+    if (!gridId || !gridLayerRef.current || !map.current) return
+
+    let matchedLayer: any = null
+    gridLayerRef.current.eachLayer((layer: any) => {
+      if (String(layer.feature?.properties?.grid_id) === gridId) matchedLayer = layer
+    })
+
+    if (matchedLayer) {
+      const props = matchedLayer.feature.properties
+      if (selectedLayerRef.current && selectedLayerRef.current !== matchedLayer) {
+        gridLayerRef.current?.resetStyle(selectedLayerRef.current)
+      }
+      selectedLayerRef.current = matchedLayer
+      selectedGridIdRef.current = props.grid_id
+      setSelectedGridInfo({ ...props, area_name: selectedLocation?.areaName || props.area_name })
+      matchedLayer.setStyle(gridStyle(props, activeLayer, props.grid_id))
+      map.current.fitBounds(matchedLayer.getBounds(), { maxZoom: 11, padding: [28, 28] })
+      matchedLayer.openPopup()
+    } else if (selectedLocation?.gridData?.latitude && selectedLocation?.gridData?.longitude) {
+      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 11)
+    }
+  }, [activeLayer, selectedLocation])
+
+  const beginPanelDrag = (event: any) => {
+    setDraggingPanel(true)
+    setDragOffset({ x: event.clientX - panelPosition.x, y: event.clientY - panelPosition.y })
   }
 
-  const onEachFeature = useCallback((feature: GeoJSON.Feature, layer: Layer) => {
-    const props = feature.properties as DistrictProps
-    layer.on({
-      mouseover(e: { target: L.Path }) { setHoveredName(props.name); e.target.setStyle(getStyle(props.riskLevel, true)); e.target.bringToFront() },
-      mouseout(e: { target: L.Path })  { setHoveredName(null); e.target.setStyle(getStyle(props.riskLevel, false)) },
-      click() { setSelectedDistrict(props); setCardVisible(true) },
-    })
-  }, [])
-
-  const featureStyle = useCallback((feature?: GeoJSON.Feature): PathOptions =>
-    getStyle(feature?.properties?.riskLevel || "optimal"), [])
-
-  const zoomIn   = () => mapRef.current?.zoomIn()
-  const zoomOut  = () => mapRef.current?.zoomOut()
-  const recenter = () => mapRef.current?.setView([-13.5, 34.2], 7)
-  const cycleLayer = () => setLayerStyle(l => l === "terrain" ? "satellite" : l === "satellite" ? "street" : "terrain")
-  const tile = TILES[layerStyle]
+  useEffect(() => {
+    if (!draggingPanel) return
+    const onMove = (event: MouseEvent) => {
+      setPanelPosition({
+        x: Math.max(8, event.clientX - dragOffset.x),
+        y: Math.max(8, event.clientY - dragOffset.y),
+      })
+    }
+    const onUp = () => setDraggingPanel(false)
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+    return () => {
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+  }, [dragOffset.x, dragOffset.y, draggingPanel])
 
   return (
     <>
       <style>{`
-        @import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
-        .leaflet-container { background: #1a2e1a !important; }
-        .leaflet-control-zoom { display: none !important; }
+        .leaflet-container { background: #e6eef2 !important; font-family: Inter, sans-serif; }
         .leaflet-control-attribution { display: none !important; }
+        .leaflet-top.leaflet-right { top: 1rem; right: 0.75rem; }
+        .district-map-label {
+          border: 0; border-radius: 999px;
+          background: rgba(15, 42, 61, 0.78);
+          color: white; font-family: Inter, sans-serif;
+          font-size: 10px; font-weight: 800; letter-spacing: 0.04em;
+          box-shadow: 0 1px 8px rgba(15,42,61,0.18); padding: 2px 7px;
+        }
       `}</style>
 
-      {/* Title block above map */}
-      <div className="mb-4 p-6 bg-white rounded-2xl border border-[#e2e8f0]">
-        <h1 className="text-[28px] font-extrabold leading-tight tracking-tight"
-          style={{ color:"#0F2A3D" }}>
-          Spatial Risk Assessment
-        </h1>
-        <p className="mt-2 text-[14px] leading-relaxed" style={{ color:"#6b7a8d" }}>
-          District monitoring for the agricultural season and rainfall detection.
-        </p>
+      <div className="mb-4 rounded-xl border border-[#d8dee4] bg-white p-5">
+        <div>
+          <h1 className="text-[28px] font-extrabold leading-tight text-[#0F2A3D]">Grid-Level Rainfall Diagnostics</h1>
+          <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">
+            5km computational grid cells carry the rainfall probabilities. Districts are reference overlays only.
+          </p>
+        </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl" style={{ height: "calc(100vh - 7.5rem)" }}>
+      {dataError && <div className="mb-4 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-sm font-medium text-[#b91c1c]">{dataError}</div>}
 
-        {/* Map */}
-        <MapContainer center={[-13.5, 34.2]} zoom={7} style={{ height:"100%", width:"100%" }} zoomControl={false} ref={mapRef}>
-          <TileLayer key={layerStyle} url={tile.url} attribution={tile.attr} />
-          <GeoJSON key="districts" data={malawiDistricts as any} style={featureStyle} onEachFeature={onEachFeature} />
-        </MapContainer>
-
-        {/* Hovered tooltip */}
-        {hoveredName && (
-          <div className="absolute right-20 top-6 z-[800] rounded-xl px-4 py-2 text-sm font-semibold text-white"
-            style={{ background:"rgba(15,42,61,0.85)", backdropFilter:"blur(8px)" }}>
-            📍 {hoveredName}
+      <div className="relative overflow-hidden rounded-xl border border-[#d8dee4] bg-white" style={{ height: "calc(100vh - 11rem)", minHeight: 600 }}>
+        {dataLoading && (
+          <div className="absolute inset-0 z-[900] flex items-center justify-center bg-white/80 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-8 w-8 animate-spin text-[#0F2A3D]" />
+              <p className="text-[13px] font-medium text-[#6b7a8d]">Loading grid diagnostics...</p>
+            </div>
           </div>
         )}
 
-        {/* Risk Legend (bottom-left) */}
-        <div className="absolute bottom-6 left-6 z-[800] rounded-2xl p-4"
-          style={{ background:"rgba(255,255,255,0.92)", backdropFilter:"blur(12px)", boxShadow:"0 8px 32px rgba(15,42,61,0.15)", border:"1px solid rgba(255,255,255,0.6)" }}>
-          <h3 className="mb-3 text-[10.5px] font-bold uppercase tracking-[0.12em]" style={{ color:"#6b7a8d" }}>Risk Legend</h3>
-          <div className="space-y-2.5">
-            {[
-              { color:"#1F7A63", label:"Safe / Optimal" },
-              { color:"#d97706", label:"Caution / Monitoring" },
-              { color:"#D64545", label:"High Risk / Alert" },
-            ].map(({ color, label }) => (
-              <div key={label} className="flex items-center gap-2.5">
-                <span className="h-3 w-3 flex-shrink-0 rounded-full" style={{ background:color }} />
-                <span className="text-[13px] font-medium" style={{ color:"#1a2332" }}>{label}</span>
-              </div>
-            ))}
-          </div>
+        <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
+
+        <div className="absolute left-5 top-5 z-[820] max-w-[calc(100%-2.5rem)] rounded-xl border border-white/70 bg-white/95 p-3 shadow-lg backdrop-blur">
+          <LocationSelector onLocationChange={setSelectedLocation} />
         </div>
 
-        {/* District info card (bottom-center) */}
-        {cardVisible && (
-          <div className="absolute bottom-6 left-1/2 z-[800] -translate-x-1/2 w-[440px]"
-            style={{ background:"rgba(255,255,255,0.95)", backdropFilter:"blur(16px)", borderRadius:"20px", boxShadow:"0 16px 48px rgba(15,42,61,0.22), 0 0 0 1px rgba(255,255,255,0.7)" }}>
-            {/* Header */}
-            <div className="flex items-start justify-between px-5 pt-4 pb-3" style={{ borderBottom:"1px solid #e2e8f0" }}>
-              <div>
-                <span className="inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white" style={{ background:"#1F7A63" }}>
-                  Active District
-                </span>
-                <h2 className="mt-1.5 text-[20px] font-extrabold leading-tight" style={{ color:"#0F2A3D" }}>
-                  {selectedDistrict.name}
-                </h2>
-              </div>
-              <div className="flex items-start gap-3">
-                <div className="text-right">
-                  <span className="text-[28px] font-black leading-none" style={{ color:"#0F2A3D" }}>{selectedDistrict.forecastOnset}</span>
-                  <p className="mt-0.5 text-[10px] font-bold uppercase tracking-widest" style={{ color:"#6b7a8d" }}>Forecast Onset</p>
-                </div>
-                <button onClick={() => setCardVisible(false)} className="mt-0.5 rounded-full p-1 transition-colors hover:bg-gray-100">
-                  <X className="h-3.5 w-3.5 text-gray-400" />
-                </button>
-              </div>
-            </div>
-
-            {/* Metrics */}
-            <div className="grid grid-cols-2 px-2 py-1" style={{ borderBottom:"1px solid #e2e8f0" }}>
-              {[
-                { label:"Crop Stress",   value:selectedDistrict.cropStress },
-                { label:"Risk Level",    value:riskLabel(selectedDistrict.riskLevel), colored:riskTextColor(selectedDistrict.riskLevel) },
-              ].map(({ label, value, colored }) => (
-                <div key={label} className="px-3 py-3">
-                  <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color:"#6b7a8d" }}>{label}</span>
-                  <p className="mt-1 text-[15px] font-extrabold" style={{ color:colored || "#0F2A3D" }}>{value}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* CTA — View Historical Trends → /map/historical */}
-            <div className="px-4 py-3">
-              <Link
-                href="/map/historical"
-                className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-[13.5px] font-bold text-white transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
-                style={{ background:"linear-gradient(135deg, #0F2A3D 0%, #1a3d54 100%)" }}
-              >
-                <History className="h-4 w-4" />
-                View Historical Trends
-                <TrendingUp className="h-4 w-4" />
-              </Link>
-            </div>
-          </div>
-        )}
-
-        {/* Show card again if dismissed */}
-        {!cardVisible && (
-          <button onClick={() => setCardVisible(true)}
-            className="absolute bottom-6 left-1/2 z-[800] -translate-x-1/2 rounded-xl px-5 py-2.5 text-[13px] font-bold text-white transition-all hover:opacity-90"
-            style={{ background:"rgba(15,42,61,0.85)", backdropFilter:"blur(8px)" }}>
-            📊 Show District Info
-          </button>
-        )}
-
-        {/* Right map controls */}
-        <div className="absolute right-5 bottom-6 z-[800] flex flex-col gap-2">
-          {[
-            { icon:<Plus  className="h-5 w-5" />, tooltip:"Zoom In",     action:zoomIn    },
-            { icon:<Minus className="h-5 w-5" />, tooltip:"Zoom Out",    action:zoomOut   },
-            { icon:<Layers className="h-5 w-5"/>, tooltip:"Layer Style", action:cycleLayer },
-            { icon:<Navigation2 className="h-5 w-5" />, tooltip:"Recenter", action:recenter },
-          ].map(({ icon, tooltip, action }) => (
-            <button key={tooltip} onClick={action} title={tooltip}
-              className="group relative flex h-10 w-10 items-center justify-center rounded-xl transition-all duration-200 hover:scale-105 active:scale-95"
-              style={{ background:"rgba(255,255,255,0.95)", backdropFilter:"blur(10px)", boxShadow:"0 4px 16px rgba(15,42,61,0.15)", color:"#0F2A3D" }}>
-              {icon}
+        <div className="absolute left-5 top-[7rem] z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+          {(Object.keys(LAYER_CONFIG) as DiagnosticLayer[]).map((layer) => (
+            <button
+              key={layer}
+              onClick={() => setActiveLayer(layer)}
+              className={`rounded-lg px-3 py-2 text-[12px] font-bold transition-all ${activeLayer === layer ? "text-white shadow-sm" : "text-[#0F2A3D] hover:bg-[#eef2f4]"}`}
+              style={activeLayer === layer ? { background: LAYER_CONFIG[layer].color } : undefined}
+            >
+              {LAYER_CONFIG[layer].shortLabel}
             </button>
           ))}
         </div>
 
-        {/* Layer style badge */}
-        <div className="absolute right-5 top-6 z-[800] rounded-full px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider"
-          style={{ background:"rgba(255,255,255,0.9)", backdropFilter:"blur(8px)", color:"#0F2A3D", boxShadow:"0 2px 8px rgba(15,42,61,0.1)" }}>
-          {layerStyle === "terrain" ? "🗻 Terrain" : layerStyle === "satellite" ? "🛰️ Satellite" : "🗺️ Street"}
+        <button
+          onClick={() => setShowDistrictLabels((value) => !value)}
+          className={`absolute right-16 top-5 z-[800] rounded-lg border border-white/70 px-3 py-2 text-[12px] font-bold shadow-lg transition-all ${showDistrictLabels ? "bg-[#0F2A3D] text-white" : "bg-white/95 text-[#0F2A3D]"}`}
+        >
+          {showDistrictLabels ? "Hide Names" : "Show Names"}
+        </button>
+
+        {selectedGridInfo && (
+          <>
+            <button
+              onClick={() => setShowSelectedPanel((value) => !value)}
+              className="absolute right-16 top-16 z-[800] flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-lg"
+            >
+              {showSelectedPanel ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              {showSelectedPanel ? "Hide Grid" : "Show Grid"}
+            </button>
+            {showSelectedPanel && (
+              <div
+                className="absolute z-[810] w-[240px] rounded-xl border border-white/70 bg-white/95 p-3 shadow-xl backdrop-blur"
+                style={{ left: panelPosition.x, top: panelPosition.y }}
+              >
+                <button
+                  onMouseDown={beginPanelDrag}
+                  className="mb-2 flex w-full cursor-move items-center justify-between rounded-lg bg-[#f8fafc] px-2 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]"
+                >
+                  Active Grid
+                  <Move className="h-3.5 w-3.5" />
+                </button>
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Grid Number</p>
+                    <p className="text-[16px] font-extrabold text-[#0F2A3D]">{selectedGridInfo.grid_id}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Selected/Search Area</p>
+                    <p className="text-[13px] font-bold text-[#0F2A3D]">{selectedGridInfo.area_name || selectedGridInfo.district_name || "Grid cell"}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="absolute bottom-5 right-5 z-[800] flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg text-[12px] text-[#64748b]">
+          <Database className="h-3.5 w-3.5" />
+          {dbHealth ? `${dbHealth.grid_cell_count} grid cells indexed` : `${gridGeo?.features.length || 0} cells loaded`}
         </div>
+
       </div>
     </>
   )
