@@ -19,6 +19,15 @@ function getFalseOnsetColor(prob: number): string {
   return "#1F7A63"                   // Low – Green
 }
 
+function pulseMarkerHtml() {
+  return `
+    <div class="gps-pulse-marker">
+      <span class="gps-pulse-ring"></span>
+      <span class="gps-pulse-dot"></span>
+    </div>
+  `
+}
+
 export default function FalseOnsetMap({
   selectedLocation,
   onLocationChange,
@@ -34,6 +43,7 @@ export default function FalseOnsetMap({
   const legendRef = useRef<L.Control<any> | null>(null)
   const statusControlRef = useRef<L.Control<any> | null>(null)
   const boundsGeojsonRef = useRef<L.GeoJSON | null>(null)
+  const locationMarkerRef = useRef<L.Marker | null>(null)
 
   useEffect(() => {
     setIsClient(true)
@@ -91,18 +101,18 @@ export default function FalseOnsetMap({
       div.style.cssText =
         "background: white; padding: 12px 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-family: Inter, sans-serif; font-size: 12px; min-width: 140px;"
       div.innerHTML = `
-        <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False-Onset Risk</p>
+        <p style="margin: 0 0 8px 0; font-weight: 700; color: #0d2f3f; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;">False Onset Level</p>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #e36a6a; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f; font-weight: 600;">High</span>
+          <span style="color: #0d2f3f; font-weight: 600;">High risk</span>
         </div>
         <div style="margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #facc15; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f; font-weight: 600;">Moderate</span>
+          <span style="color: #0d2f3f; font-weight: 600;">Medium risk</span>
         </div>
         <div style="display: flex; align-items: center; gap: 6px;">
           <span style="display: inline-block; width: 18px; height: 12px; border-radius: 3px; background: #1F7A63; flex-shrink: 0;"></span>
-          <span style="color: #0d2f3f; font-weight: 600;">Low</span>
+          <span style="color: #0d2f3f; font-weight: 600;">Low risk</span>
         </div>
       `
       return div
@@ -136,13 +146,32 @@ export default function FalseOnsetMap({
     }
   }, [apiStatus])
 
-  // Map zooming effect when selection changes
+  // Area pointer effect when selection changes
   useEffect(() => {
     if (!map.current || !selectedLocation) return
     
     if (selectedLocation.gridData?.latitude && selectedLocation.gridData?.longitude) {
-      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 12, { animate: true })
-      return
+      const latitude = Number(selectedLocation.gridData.area_latitude ?? selectedLocation.gridData.latitude)
+      const longitude = Number(selectedLocation.gridData.area_longitude ?? selectedLocation.gridData.longitude)
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
+
+      locationMarkerRef.current?.remove()
+      locationMarkerRef.current = L.marker([latitude, longitude], {
+        icon: L.divIcon({
+          className: "",
+          html: pulseMarkerHtml(),
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        }),
+      })
+        .addTo(map.current)
+        .bindTooltip(selectedLocation.areaName || "Selected area", {
+          direction: "top",
+          offset: [0, -12],
+          opacity: 0.95,
+        })
+
+      map.current.panTo([latitude, longitude], { animate: true })
     }
   }, [selectedLocation])
 
@@ -160,6 +189,7 @@ export default function FalseOnsetMap({
 
     async function drawGridCells() {
       try {
+        const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
         // Country outline for context
         const country = await fetchBoundaries("country", true)
         if (map.current && country && country.features && country.features.length) {
@@ -189,7 +219,6 @@ export default function FalseOnsetMap({
           }).addTo(map.current)
           districtLayers.current.set('districts-overlay', districtLayer as any)
 
-          const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
           if (!selectedLocation?.gridData) {
             const matchedFeature = districts.features.find((f: any) => {
               const name = f.properties?.DISTRICT || f.properties?.shapeName || f.properties?.name || ''
@@ -204,7 +233,7 @@ export default function FalseOnsetMap({
           }
         }
 
-        const grid = await fetchGridDiagnostics({ limit: 12000, source_grid: 'esri_5km_v1' })
+        const grid = await fetchGridDiagnostics({ limit: 2500, source_grid: 'esri_5km_v1', district: activeDistrict })
         if (!map.current) return
 
         const gridLayer = L.geoJSON(grid as any, {
@@ -259,6 +288,12 @@ export default function FalseOnsetMap({
                   overall_risk_level: props.overall_risk_level ?? 'Low',
                   false_onset_probability: props.false_onset_probability ?? 0,
                   dry_spell_probability: props.dry_spell_probability ?? 0,
+                  dry_spell_probability_5day: props.dry_spell_probability_5day ?? props.dry_spell_probability ?? 0,
+                  dry_spell_probability_7day: props.dry_spell_probability_7day ?? 0,
+                  dry_spell_probability_9day: props.dry_spell_probability_9day ?? 0,
+                  early_establishment_stress_probability: props.early_establishment_stress_probability ?? props.dry_spell_probability ?? 0,
+                  onset_spread_days: props.onset_spread_days ?? null,
+                  onset_variability_std: props.onset_variability_std ?? null,
                   onset_probability: props.onset_probability ?? 0,
                   seasons_analyzed: seasons,
                   seasons_with_detected_onset: props.seasons_with_detected_onset ?? 0,
@@ -318,6 +353,21 @@ export default function FalseOnsetMap({
           letter-spacing: 0.04em;
           box-shadow: 0 1px 8px rgba(15,42,61,0.18);
           padding: 2px 7px;
+        }
+        .gps-pulse-marker { position: relative; width: 24px; height: 24px; }
+        .gps-pulse-dot {
+          position: absolute; left: 8px; top: 8px; width: 8px; height: 8px;
+          border-radius: 999px; background: #D64545; border: 2px solid #ffffff;
+          box-shadow: 0 2px 8px rgba(15, 42, 61, 0.25);
+        }
+        .gps-pulse-ring {
+          position: absolute; left: 2px; top: 2px; width: 20px; height: 20px;
+          border-radius: 999px; background: rgba(214, 69, 69, 0.28);
+          animation: gpsPulse 1.25s ease-out infinite;
+        }
+        @keyframes gpsPulse {
+          0% { transform: scale(0.65); opacity: 0.95; }
+          100% { transform: scale(1.8); opacity: 0; }
         }
       `}</style>
     </div>

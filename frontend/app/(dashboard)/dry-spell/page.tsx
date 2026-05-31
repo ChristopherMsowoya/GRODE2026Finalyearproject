@@ -49,6 +49,9 @@ export default function DrySpellPage() {
           <div className="space-y-1">
             <p className="text-[12px] uppercase tracking-[0.32em] text-[#6b7a8d]">Dry Spell Analysis</p>
             <h1 className="text-4xl font-bold text-[#0d2f3f]">Dry Spell Risk</h1>
+            <p className="max-w-3xl text-[14px] leading-6 text-[#6b7a8d]">
+              Displays grid-level probability of 5, 7, and 9-day dry spells after valid rainfall onset, helping identify areas where crops may face early establishment stress.
+            </p>
           </div>
           {liveStatus === "live" && (
             <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1.5 rounded-full w-fit">
@@ -88,12 +91,7 @@ export default function DrySpellPage() {
         <div className="flex flex-col gap-5">
           <GridDiagnosticWidget
             metricLabel="Dry Spell Probability"
-            metricValue={
-              selectedLocation?.gridData?.dry_spell_probability ??
-              selectedLocation?.taData?.average_dry_spell_probability ??
-              liveSelectedDistrict?.average_dry_spell_probability ??
-              null
-            }
+            metricValue={selectedLocation?.gridData?.dry_spell_probability ?? null}
             selectedLocation={selectedLocation}
             defaultDistrict={defaultDistrict}
             liveStatus={liveStatus}

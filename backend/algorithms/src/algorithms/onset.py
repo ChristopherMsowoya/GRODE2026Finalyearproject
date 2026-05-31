@@ -4,25 +4,33 @@ import numpy as np
 from utils.timeseries_utils import detect_dry_spells_vectorized
 
 
-def detect_onset_details_fast(rainfall, dates):
+def detect_onset_details_fast(
+    rainfall,
+    dates,
+    trigger_threshold=25,
+    trigger_window=3,
+    persistence_window=20,
+    failure_dry_spell_days=10,
+    dry_day_threshold=1.0,
+):
     rain = np.asarray(rainfall, dtype=float)
     date_values = np.asarray(dates)
 
-    if rain.size < 20:
+    if rain.size < max(trigger_window, persistence_window):
         return None, None
 
-    rolling_sum = np.convolve(rain, np.ones(3, dtype=float), mode="valid")
-    candidates = np.where(rolling_sum >= 25)[0] + 2
+    rolling_sum = np.convolve(rain, np.ones(trigger_window, dtype=float), mode="valid")
+    candidates = np.where(rolling_sum >= trigger_threshold)[0] + (trigger_window - 1)
 
     for index in candidates:
-        next_20 = rain[index:index + 20]
+        next_window = rain[index:index + persistence_window]
 
-        if next_20.size < 20:
+        if next_window.size < persistence_window:
             continue
 
-        dry_spells = detect_dry_spells_vectorized(next_20)
+        dry_spells = detect_dry_spells_vectorized(next_window, dry_day_threshold=dry_day_threshold)
 
-        if any(spell >= 10 for spell in dry_spells):
+        if any(spell >= failure_dry_spell_days for spell in dry_spells):
             continue
 
         return date_values[index], int(index)
@@ -30,6 +38,6 @@ def detect_onset_details_fast(rainfall, dates):
     return None, None
 
 
-def detect_onset_fast(rainfall, dates):
-    onset_date, _ = detect_onset_details_fast(rainfall, dates)
+def detect_onset_fast(rainfall, dates, **kwargs):
+    onset_date, _ = detect_onset_details_fast(rainfall, dates, **kwargs)
     return onset_date

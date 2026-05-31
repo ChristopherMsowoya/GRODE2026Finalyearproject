@@ -36,6 +36,15 @@ function percent(value?: number | null) {
   return typeof value === "number" && Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "-"
 }
 
+function pulseMarkerHtml() {
+  return `
+    <div class="gps-pulse-marker">
+      <span class="gps-pulse-ring"></span>
+      <span class="gps-pulse-dot"></span>
+    </div>
+  `
+}
+
 function toSelectedLocation(props: GridDiagnosticProperties): SelectedLocation {
   const seasons = props.seasons_analyzed ?? 0
   const onsetProbability = props.onset_probability ?? (
@@ -55,6 +64,12 @@ function toSelectedLocation(props: GridDiagnosticProperties): SelectedLocation {
       overall_risk_level: props.overall_risk_level || "Low",
       false_onset_probability: props.false_onset_probability ?? 0,
       dry_spell_probability: props.dry_spell_probability ?? 0,
+      dry_spell_probability_5day: props.dry_spell_probability_5day ?? props.dry_spell_probability ?? 0,
+      dry_spell_probability_7day: props.dry_spell_probability_7day ?? 0,
+      dry_spell_probability_9day: props.dry_spell_probability_9day ?? 0,
+      early_establishment_stress_probability: props.early_establishment_stress_probability ?? props.dry_spell_probability ?? 0,
+      onset_spread_days: props.onset_spread_days ?? null,
+      onset_variability_std: props.onset_variability_std ?? null,
       onset_probability: onsetProbability,
       seasons_analyzed: seasons,
       seasons_with_detected_onset: props.seasons_with_detected_onset ?? 0,
@@ -71,6 +86,7 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
   const map = useRef<L.Map | null>(null)
   const gridLayer = useRef<L.GeoJSON | null>(null)
   const overlayLayers = useRef<L.Layer[]>([])
+  const locationMarkerRef = useRef<L.Marker | null>(null)
   const [isClient, setIsClient] = useState(false)
   const [showDistrictLabels, setShowDistrictLabels] = useState(true)
   const [apiStatus, setApiStatus] = useState<"loading" | "live" | "error">("loading")
@@ -113,12 +129,11 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
       const div = L.DomUtil.create("div", "map-legend")
       div.style.cssText = "background:white;padding:12px 16px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-family:Inter,sans-serif;font-size:12px;min-width:190px;"
       div.innerHTML = `
-        <p style="margin:0 0 8px 0;font-weight:800;color:#0d2f3f;font-size:11px;text-transform:uppercase;letter-spacing:.08em;">Dry Spell Probability</p>
+        <p style="margin:0 0 8px 0;font-weight:800;color:#0d2f3f;font-size:11px;text-transform:uppercase;letter-spacing:.08em;">Dry Spell Level</p>
         ${LEGEND.map((bin) => `
           <div style="margin-bottom:6px;display:flex;align-items:center;gap:7px;">
             <span style="display:inline-block;width:18px;height:12px;border-radius:3px;background:${bin.color};border:1px solid rgba(0,0,0,.12);"></span>
-            <span style="color:#0d2f3f;font-weight:600;">${bin.min}% - ${bin.max}%</span>
-            <span style="color:#64748b;">${bin.label}</span>
+            <span style="color:#0d2f3f;font-weight:600;">${bin.label}</span>
           </div>
         `).join("")}
       `
@@ -130,9 +145,29 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
   useEffect(() => {
     if (!isClient || !map.current || !selectedLocation) return
     
-    // Zoom to grid
+    // Show selected area without changing the current zoom level.
     if (selectedLocation.gridData?.latitude && selectedLocation.gridData?.longitude) {
-      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 12, { animate: true })
+      const latitude = Number(selectedLocation.gridData.area_latitude ?? selectedLocation.gridData.latitude)
+      const longitude = Number(selectedLocation.gridData.area_longitude ?? selectedLocation.gridData.longitude)
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
+
+      locationMarkerRef.current?.remove()
+      locationMarkerRef.current = L.marker([latitude, longitude], {
+        icon: L.divIcon({
+          className: "",
+          html: pulseMarkerHtml(),
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        }),
+      })
+        .addTo(map.current)
+        .bindTooltip(selectedLocation.areaName || "Selected area", {
+          direction: "top",
+          offset: [0, -12],
+          opacity: 0.95,
+        })
+
+      map.current.panTo([latitude, longitude], { animate: true })
     }
   }, [selectedLocation])
 
@@ -144,10 +179,11 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
     overlayLayers.current = []
 
     async function draw() {
+      const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
       const [country, districts, grid] = await Promise.all([
         fetchBoundaries("country", true),
         fetchBoundaries("districts", true),
-        fetchGridDiagnostics({ limit: 12000, source_grid: "esri_5km_v1" }),
+        fetchGridDiagnostics({ limit: 2500, source_grid: "esri_5km_v1", district: activeDistrict }),
       ])
       if (!map.current) return
 
@@ -167,7 +203,6 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
       }).addTo(map.current)
       overlayLayers.current = [countryLayer, districtLayer]
 
-      const activeDistrict = selectedLocation?.district || userDistrict || "Lilongwe"
       const matchedFeature = (districts as any).features?.find((f: any) => {
         const name = f.properties?.DISTRICT || f.properties?.shapeName || f.properties?.name || ''
         return name.toLowerCase() === activeDistrict.toLowerCase()
@@ -217,7 +252,7 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
     }
 
     void draw()
-  }, [isClient, selectedLocation?.grid, onLocationChange, onDistrictDataLoad, showDistrictLabels])
+  }, [isClient, selectedLocation?.district, selectedLocation?.grid, userDistrict, onLocationChange, onDistrictDataLoad, showDistrictLabels])
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "600px" }}>
@@ -247,6 +282,21 @@ export default function DrySpellMap({ selectedLocation, onLocationChange, userDi
           letter-spacing: 0.04em;
           box-shadow: 0 1px 8px rgba(15,42,61,0.18);
           padding: 2px 7px;
+        }
+        .gps-pulse-marker { position: relative; width: 24px; height: 24px; }
+        .gps-pulse-dot {
+          position: absolute; left: 8px; top: 8px; width: 8px; height: 8px;
+          border-radius: 999px; background: #D64545; border: 2px solid #ffffff;
+          box-shadow: 0 2px 8px rgba(15, 42, 61, 0.25);
+        }
+        .gps-pulse-ring {
+          position: absolute; left: 2px; top: 2px; width: 20px; height: 20px;
+          border-radius: 999px; background: rgba(214, 69, 69, 0.28);
+          animation: gpsPulse 1.25s ease-out infinite;
+        }
+        @keyframes gpsPulse {
+          0% { transform: scale(0.65); opacity: 0.95; }
+          100% { transform: scale(1.8); opacity: 0; }
         }
       `}</style>
     </div>

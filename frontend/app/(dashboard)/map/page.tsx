@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import "leaflet/dist/leaflet.css"
-import { Database, Eye, EyeOff, Loader2, Move } from "lucide-react"
+import { Database, Loader2 } from "lucide-react"
 import {
   fetchBoundaries,
   fetchDatabaseHealth,
@@ -10,7 +10,6 @@ import {
   type DatabaseHealthResponse,
   type DiagnosticLayer,
   type GeoJsonFeatureCollection,
-  type GridDiagnosticProperties,
 } from "@/lib/algorithm-api"
 import LocationSelector, { type SelectedLocation } from "@/components/location-selector"
 
@@ -52,6 +51,15 @@ function gridStyle(props: Record<string, any>, layer: DiagnosticLayer, selectedG
   }
 }
 
+function pulseMarkerHtml() {
+  return `
+    <div class="gps-pulse-marker">
+      <span class="gps-pulse-ring"></span>
+      <span class="gps-pulse-dot"></span>
+    </div>
+  `
+}
+
 export default function MapPage() {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<any>(null)
@@ -60,6 +68,7 @@ export default function MapPage() {
   const districtLayerRef = useRef<any>(null)
   const legendRef = useRef<any>(null)
   const selectedLayerRef = useRef<any>(null)
+  const locationMarkerRef = useRef<any>(null)
   const selectedGridIdRef = useRef<string | null>(null)
   const [leaflet, setLeaflet] = useState<any>(null)
 
@@ -73,11 +82,6 @@ export default function MapPage() {
   const [dataError, setDataError] = useState<string | null>(null)
   const [dbHealth, setDbHealth] = useState<DatabaseHealthResponse | null>(null)
   const [dataLoading, setDataLoading] = useState(true)
-  const [selectedGridInfo, setSelectedGridInfo] = useState<GridDiagnosticProperties | null>(null)
-  const [showSelectedPanel, setShowSelectedPanel] = useState(true)
-  const [panelPosition, setPanelPosition] = useState({ x: 20, y: 92 })
-  const [draggingPanel, setDraggingPanel] = useState(false)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [selectedLocation, setSelectedLocation] = useState<SelectedLocation | null>(null)
 
   useEffect(() => { setIsClient(true) }, [])
@@ -107,23 +111,23 @@ export default function MapPage() {
     if (!isClient) return
     let cancelled = false
     async function loadMapData() {
+      const activeDistrict = selectedLocation?.district || "Lilongwe"
       setDataLoading(true)
       try {
         const [health, country, districts, grid] = await Promise.all([
           fetchDatabaseHealth(),
           fetchBoundaries("country", true),
           fetchBoundaries("districts", true),
-          fetchGridDiagnostics({ limit: 12000, source_grid: "esri_5km_v1" }),
+          fetchGridDiagnostics({ limit: 2500, source_grid: "esri_5km_v1", district: activeDistrict }),
         ])
         if (cancelled) return
         setDbHealth(health)
         setCountryGeo(country)
         setDistrictGeo(districts)
         setGridGeo(grid)
-        const firstGrid = grid.features[0]?.properties as unknown as GridDiagnosticProperties | undefined
+        const firstGrid = grid.features[0]?.properties as { grid_id?: string } | undefined
         if (firstGrid?.grid_id) {
           selectedGridIdRef.current = firstGrid.grid_id
-          setSelectedGridInfo(firstGrid)
         }
       } catch (error) {
         if (!cancelled) setDataError(error instanceof Error ? error.message : "Failed to load grid diagnostics.")
@@ -133,7 +137,7 @@ export default function MapPage() {
     }
     void loadMapData()
     return () => { cancelled = true }
-  }, [isClient])
+  }, [isClient, selectedLocation?.district])
 
   useEffect(() => {
     if (!isClient || !leaflet || !map.current) return
@@ -151,7 +155,6 @@ export default function MapPage() {
       }
       selectedLayerRef.current = layer
       selectedGridIdRef.current = props.grid_id
-      setSelectedGridInfo(props)
       layer.setStyle(gridStyle(props, activeLayer, props.grid_id))
       if (openPopup) layer.openPopup()
     }
@@ -230,36 +233,35 @@ export default function MapPage() {
       }
       selectedLayerRef.current = matchedLayer
       selectedGridIdRef.current = props.grid_id
-      setSelectedGridInfo({ ...props, area_name: selectedLocation?.areaName || props.area_name })
       matchedLayer.setStyle(gridStyle(props, activeLayer, props.grid_id))
-      map.current.fitBounds(matchedLayer.getBounds(), { maxZoom: 11, padding: [28, 28] })
-      matchedLayer.openPopup()
-    } else if (selectedLocation?.gridData?.latitude && selectedLocation?.gridData?.longitude) {
-      map.current.setView([selectedLocation.gridData.latitude, selectedLocation.gridData.longitude], 11)
     }
   }, [activeLayer, selectedLocation])
 
-  const beginPanelDrag = (event: any) => {
-    setDraggingPanel(true)
-    setDragOffset({ x: event.clientX - panelPosition.x, y: event.clientY - panelPosition.y })
-  }
-
   useEffect(() => {
-    if (!draggingPanel) return
-    const onMove = (event: MouseEvent) => {
-      setPanelPosition({
-        x: Math.max(8, event.clientX - dragOffset.x),
-        y: Math.max(8, event.clientY - dragOffset.y),
+    if (!leaflet || !map.current || !selectedLocation?.gridData) return
+
+    const latitude = Number(selectedLocation.gridData.area_latitude ?? selectedLocation.gridData.latitude)
+    const longitude = Number(selectedLocation.gridData.area_longitude ?? selectedLocation.gridData.longitude)
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || (latitude === 0 && longitude === 0)) return
+
+    locationMarkerRef.current?.remove()
+    const icon = leaflet.divIcon({
+      className: "",
+      html: pulseMarkerHtml(),
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    })
+    locationMarkerRef.current = leaflet
+      .marker([latitude, longitude], { icon })
+      .addTo(map.current)
+      .bindTooltip(selectedLocation.areaName || selectedLocation.gridData.area_name || "Selected area", {
+        direction: "top",
+        offset: [0, -12],
+        opacity: 0.95,
       })
-    }
-    const onUp = () => setDraggingPanel(false)
-    window.addEventListener("mousemove", onMove)
-    window.addEventListener("mouseup", onUp)
-    return () => {
-      window.removeEventListener("mousemove", onMove)
-      window.removeEventListener("mouseup", onUp)
-    }
-  }, [dragOffset.x, dragOffset.y, draggingPanel])
+
+    map.current.panTo([latitude, longitude], { animate: true })
+  }, [leaflet, selectedLocation])
 
   return (
     <>
@@ -274,14 +276,49 @@ export default function MapPage() {
           font-size: 10px; font-weight: 800; letter-spacing: 0.04em;
           box-shadow: 0 1px 8px rgba(15,42,61,0.18); padding: 2px 7px;
         }
+        .gps-pulse-marker {
+          position: relative;
+          width: 24px;
+          height: 24px;
+        }
+        .gps-pulse-dot {
+          position: absolute;
+          left: 8px;
+          top: 8px;
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: #D64545;
+          border: 2px solid #ffffff;
+          box-shadow: 0 2px 8px rgba(15, 42, 61, 0.25);
+        }
+        .gps-pulse-ring {
+          position: absolute;
+          left: 2px;
+          top: 2px;
+          width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          background: rgba(214, 69, 69, 0.28);
+          animation: gpsPulse 1.25s ease-out infinite;
+        }
+        @keyframes gpsPulse {
+          0% { transform: scale(0.65); opacity: 0.95; }
+          100% { transform: scale(1.8); opacity: 0; }
+        }
       `}</style>
 
       <div className="mb-4 rounded-xl border border-[#d8dee4] bg-white p-5">
-        <div>
-          <h1 className="text-[28px] font-extrabold leading-tight text-[#0F2A3D]">Grid-Level Rainfall Diagnostics</h1>
-          <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">
-            5km computational grid cells carry the rainfall probabilities. Districts are reference overlays only.
-          </p>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <h1 className="text-[28px] font-extrabold leading-tight text-[#0F2A3D]">Grid-Level Rainfall Diagnostics</h1>
+            <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">
+              5km computational grid cells carry the rainfall probabilities. Districts are reference overlays only.
+            </p>
+          </div>
+          <div className="w-full xl:max-w-[760px]">
+            <LocationSelector onLocationChange={setSelectedLocation} />
+          </div>
         </div>
       </div>
 
@@ -299,11 +336,7 @@ export default function MapPage() {
 
         <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
 
-        <div className="absolute left-5 top-5 z-[820] max-w-[calc(100%-2.5rem)] rounded-xl border border-white/70 bg-white/95 p-3 shadow-lg backdrop-blur">
-          <LocationSelector onLocationChange={setSelectedLocation} />
-        </div>
-
-        <div className="absolute left-5 top-[7rem] z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+        <div className="absolute left-5 top-5 z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
           {(Object.keys(LAYER_CONFIG) as DiagnosticLayer[]).map((layer) => (
             <button
               key={layer}
@@ -322,42 +355,6 @@ export default function MapPage() {
         >
           {showDistrictLabels ? "Hide Names" : "Show Names"}
         </button>
-
-        {selectedGridInfo && (
-          <>
-            <button
-              onClick={() => setShowSelectedPanel((value) => !value)}
-              className="absolute right-16 top-16 z-[800] flex items-center gap-1.5 rounded-lg border border-white/70 bg-white/95 px-3 py-2 text-[12px] font-bold text-[#0F2A3D] shadow-lg"
-            >
-              {showSelectedPanel ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              {showSelectedPanel ? "Hide Grid" : "Show Grid"}
-            </button>
-            {showSelectedPanel && (
-              <div
-                className="absolute z-[810] w-[240px] rounded-xl border border-white/70 bg-white/95 p-3 shadow-xl backdrop-blur"
-                style={{ left: panelPosition.x, top: panelPosition.y }}
-              >
-                <button
-                  onMouseDown={beginPanelDrag}
-                  className="mb-2 flex w-full cursor-move items-center justify-between rounded-lg bg-[#f8fafc] px-2 py-1.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#64748b]"
-                >
-                  Active Grid
-                  <Move className="h-3.5 w-3.5" />
-                </button>
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Grid Number</p>
-                    <p className="text-[16px] font-extrabold text-[#0F2A3D]">{selectedGridInfo.grid_id}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#64748b]">Selected/Search Area</p>
-                    <p className="text-[13px] font-bold text-[#0F2A3D]">{selectedGridInfo.area_name || selectedGridInfo.district_name || "Grid cell"}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </>
-        )}
 
         <div className="absolute bottom-5 right-5 z-[800] flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg text-[12px] text-[#64748b]">
           <Database className="h-3.5 w-3.5" />
