@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Mail, Lock, Eye, EyeOff, ChevronRight, Loader2 } from "lucide-react"
 import { useUser } from "@/lib/user-context"
 import type { UserProfile } from "@/lib/user-context"
@@ -46,14 +46,21 @@ function InputField({
 // ─── Page ───────────────────────────────────────────────────────────────────
 export default function SignInPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const { login } = useUser()
+  const [redirect, setRedirect] = useState<string | null>(null)
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const redirectParam = new URLSearchParams(window.location.search).get("redirect")
+      setRedirect(redirectParam)
+    }
+  }, [])
 
   const handleSignIn = (e: React.FormEvent) => {
     e.preventDefault()
@@ -90,7 +97,6 @@ export default function SignInPage() {
         login(mockProfile)
         
         // Redirect to the page user was trying to access, or dashboard
-        const redirect = searchParams.get("redirect")
         router.push(redirect || "/")
       } else {
         setError("Invalid email or password. Please try again.")
@@ -161,12 +167,6 @@ export default function SignInPage() {
             </button>
           </form>
 
-          <p className="mt-8 text-center text-[13.5px]" style={{ color: "#6b7a8d" }}>
-            Don&apos;t have an account?{" "}
-            <Link href="/create-account" className="font-semibold hover:underline" style={{ color: "#1F7A63" }}>
-              Create an account
-            </Link>
-          </p>
         </div>
     </div>
   )

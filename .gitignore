@@ -10,3 +10,10 @@ backend/algorithms/data/raw/*.nc
 # Keep these folders in the repo structure
 !backend/algorithms/data/raw/.gitkeep
 !backend/algorithms/outputs/.gitkeep
+
+# Local environment files
+backend/.env
+.env
+
+# Runtime logs
+backend/api/*.log
