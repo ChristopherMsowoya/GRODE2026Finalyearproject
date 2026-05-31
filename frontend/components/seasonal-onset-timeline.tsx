@@ -25,6 +25,8 @@ const TOOLTIP_TEXT = {
   p10: "P10 is the early-onset threshold: 10% of valid onset triggers occurred on or before this rainy-season date.",
   median: "Median onset is the central trigger date: half of valid onset triggers occurred before it and half after it.",
   p90: "P90 is the late-onset threshold: 90% of valid onset triggers occurred on or before this rainy-season date.",
+  spread: "Onset spread is P90 minus P10. A larger spread means onset timing is more variable from year to year.",
+  variability: "Onset variability is the standard deviation of onset timing across valid seasons for this grid cell.",
 }
 
 export default function SeasonalOnsetTimeline({ location }: { location: SelectedLocation | null }) {
@@ -134,10 +136,12 @@ export default function SeasonalOnsetTimeline({ location }: { location: Selected
         </div>
       </div>
 
-      <div className="grid gap-3 p-6 md:grid-cols-3">
+      <div className="grid gap-3 p-6 md:grid-cols-5">
         <SummaryTile label="P10" value={timeline?.p10_onset_date} tooltip={TOOLTIP_TEXT.p10} loading={loading} />
         <SummaryTile label="Median Onset" value={timeline?.median_onset_date} tooltip={TOOLTIP_TEXT.median} loading={loading} />
         <SummaryTile label="P90" value={timeline?.p90_onset_date} tooltip={TOOLTIP_TEXT.p90} loading={loading} />
+        <SummaryTile label="Onset Spread" value={formatDays(timeline?.onset_spread_days)} tooltip={TOOLTIP_TEXT.spread} loading={loading} />
+        <SummaryTile label="Variability" value={formatDays(timeline?.onset_variability_std)} tooltip={TOOLTIP_TEXT.variability} loading={loading} />
       </div>
 
       <div className="border-t border-[#f0f4f8] px-6 py-5">
@@ -264,6 +268,7 @@ export default function SeasonalOnsetTimeline({ location }: { location: Selected
 }
 
 function SummaryTile({ label, value, tooltip, loading }: { label: string; value?: string | null; tooltip: string; loading: boolean }) {
+  const displayValue = value?.endsWith("days") ? value : formatDate(value)
   return (
     <div className="rounded-lg border border-[#e2e8f0] bg-[#f8fafc] p-4">
       <div className="mb-3 flex items-center justify-between">
@@ -273,7 +278,7 @@ function SummaryTile({ label, value, tooltip, loading }: { label: string; value?
         <ScientificTooltip text={tooltip} />
       </div>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">{label}</p>
-      <p className="mt-1 text-[20px] font-extrabold text-[#0F2A3D]">{loading ? "..." : formatDate(value)}</p>
+      <p className="mt-1 text-[20px] font-extrabold text-[#0F2A3D]">{loading ? "..." : displayValue}</p>
     </div>
   )
 }
@@ -314,6 +319,12 @@ function formatDate(value?: string | null) {
   const date = parseDate(value)
   if (!date) return "-"
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+}
+
+function formatDays(value?: number | string | null) {
+  if (value === null || value === undefined || value === "") return "-"
+  if (typeof value === "string") return value
+  return `${value} days`
 }
 
 function formatSeason(year: number) {

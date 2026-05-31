@@ -27,6 +27,12 @@ export interface GridOption {
   overall_risk_level: "Low" | "Medium" | "High"
   false_onset_probability: number
   dry_spell_probability: number
+  dry_spell_probability_5day?: number | null
+  dry_spell_probability_7day?: number | null
+  dry_spell_probability_9day?: number | null
+  early_establishment_stress_probability?: number | null
+  onset_spread_days?: number | null
+  onset_variability_std?: number | null
   onset_probability?: number | null
   seasons_analyzed: number
   seasons_with_detected_onset: number
@@ -75,6 +81,12 @@ function toGridOption(area: EnumerationAreaOption): GridOption | null {
     overall_risk_level: grid.overall_risk_level ?? "Low",
     false_onset_probability: Number(grid.false_onset_probability ?? 0),
     dry_spell_probability: Number(grid.dry_spell_probability ?? 0),
+    dry_spell_probability_5day: Number(grid.dry_spell_probability_5day ?? grid.dry_spell_probability ?? 0),
+    dry_spell_probability_7day: Number(grid.dry_spell_probability_7day ?? 0),
+    dry_spell_probability_9day: Number(grid.dry_spell_probability_9day ?? 0),
+    early_establishment_stress_probability: Number(grid.early_establishment_stress_probability ?? grid.dry_spell_probability ?? 0),
+    onset_spread_days: grid.onset_spread_days ?? null,
+    onset_variability_std: grid.onset_variability_std ?? null,
     onset_probability: Number(grid.onset_probability ?? (
       grid.seasons_with_detected_onset && seasons ? grid.seasons_with_detected_onset / seasons : 0
     )),

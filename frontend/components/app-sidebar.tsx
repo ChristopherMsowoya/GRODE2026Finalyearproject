@@ -6,9 +6,11 @@ import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import {
   LayoutDashboard, Map, Sun, AlertTriangle, Sprout,
-  Headphones, Settings, Menu, Crown
+  Headphones, Settings, Menu, Crown, ShieldCheck
 } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet"
+
+const ADMIN_TOKEN_KEY = "grode_admin_token"
 
 const navItems = [
   { name: "Dashboard",        href: "/",            icon: LayoutDashboard },
@@ -20,11 +22,28 @@ const navItems = [
   { name: "Developer Portal",     href: "/developer-portal", icon: Crown   },
 ]
 
+const adminNavItem = { name: "Admin Dashboard", href: "/admin-dashboard", icon: ShieldCheck }
+
 const footerNavItems = [
   { name: "Settings", href: "/settings", icon: Settings },
 ]
 
 function SidebarInner({ pathname }: { pathname: string }) {
+  const [showAdminNav, setShowAdminNav] = useState(false)
+
+  useEffect(() => {
+    const syncAdminNav = () => setShowAdminNav(Boolean(localStorage.getItem(ADMIN_TOKEN_KEY)))
+    syncAdminNav()
+    window.addEventListener("storage", syncAdminNav)
+    window.addEventListener("grode-admin-session", syncAdminNav)
+    return () => {
+      window.removeEventListener("storage", syncAdminNav)
+      window.removeEventListener("grode-admin-session", syncAdminNav)
+    }
+  }, [])
+
+  const visibleNavItems = showAdminNav ? [...navItems, adminNavItem] : navItems
+
   return (
     <>
       {/* ── Logo ──────────────────────────────────────────────────────────── */}
@@ -42,7 +61,7 @@ function SidebarInner({ pathname }: { pathname: string }) {
 
       {/* ── Main Nav ──────────────────────────────────────────────────────── */}
       <nav className="flex-1 space-y-1 px-4 py-5 overflow-y-auto">
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const isActive = pathname === item.href
           return (
             <Link

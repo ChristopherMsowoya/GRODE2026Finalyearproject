@@ -1,6 +1,10 @@
 from pathlib import Path
+import base64
+import hashlib
+import hmac
 import json
 import os
+import re
 import sys
 import uuid
 from urllib.error import URLError
@@ -10,8 +14,10 @@ import csv
 from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 import math
+import numpy as np
+import pandas as pd
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
@@ -64,12 +70,18 @@ except Exception as e:
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
 RESULTS_JSON_PATH = ALGORITHMS_OUTPUTS / "results.json"
+RAW_CHIRPS_DIR = PROJECT_ROOT / "backend" / "algorithms" / "data" / "raw"
 SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
+ALLOWED_RAINFALL_DATASET_EXTENSIONS = {".nc", ".nc4", ".cdf"}
+ADMIN_ACCESS_CODE = os.environ.get("GRODE_ADMIN_ACCESS_CODE") or os.environ.get("ADMIN_ACCESS_CODE") or "grode-admin-2026"
+ADMIN_SESSION_SECRET = os.environ.get("GRODE_ADMIN_SESSION_SECRET") or os.environ.get("SUPABASE_KEY") or ADMIN_ACCESS_CODE
+ADMIN_SESSION_TTL_SECONDS = int(os.environ.get("GRODE_ADMIN_SESSION_TTL_SECONDS", "28800"))
 
 if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
 
 from backend.src.pipeline.run_pipeline import run
+from config.algorithm_config import DEFAULT_ALGORITHM_CONFIG, load_algorithm_config, save_algorithm_config
 
 
 LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
@@ -102,6 +114,12 @@ CURATED_LOCATION_AREAS = [
 
 def dry_spell_probability(result: dict) -> float:
     return result.get("dry_spell_probability", result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0))
+
+
+def dry_spell_probability_for_threshold(result: dict, threshold: int) -> float:
+    if threshold == 5:
+        return float(result.get("dry_spell_probability_5day", dry_spell_probability(result)) or 0)
+    return float(result.get(f"dry_spell_probability_{threshold}day") or 0)
 
 
 def extract_available_years(results: list[dict]) -> list[int]:
@@ -160,6 +178,9 @@ def build_season_diagnostics_from_result(result: dict) -> list[dict]:
             ),
             "false_onset_probability": result.get("false_onset_probability", 0),
             "dry_spell_probability": dry_spell_probability(result),
+            "dry_spell_probability_5day": dry_spell_probability_for_threshold(result, 5),
+            "dry_spell_probability_7day": dry_spell_probability_for_threshold(result, 7),
+            "dry_spell_probability_9day": dry_spell_probability_for_threshold(result, 9),
         }
         for index in range(seasons)
     ]
@@ -205,18 +226,25 @@ def percentile(values: list[float], pct: float) -> float | None:
 
 
 def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
-    valid = [
-        diagnostic
-        for diagnostic in diagnostics
-        if diagnostic.get("onset_detected") and diagnostic.get("onset_date") and diagnostic.get("season_year") is not None
-    ]
+    config = load_algorithm_config()
+    rainy_months = set(range(config["season_start_month"], 13)) | set(range(1, config["season_end_month"] + 1))
+    valid = []
     offsets = []
-    for diagnostic in valid:
+    for diagnostic in diagnostics:
+        if not (diagnostic.get("onset_detected") and diagnostic.get("onset_date") and diagnostic.get("season_year") is not None):
+            continue
         try:
             onset_date = datetime.fromisoformat(str(diagnostic["onset_date"])).date()
             season_year = int(diagnostic["season_year"])
-            season_start = datetime(season_year, 11, 1).date()
+            if onset_date.month not in rainy_months:
+                continue
+            season_start = datetime(season_year, config["season_start_month"], 1).date()
+            if onset_date.month <= config["season_end_month"] and onset_date.year == season_year:
+                continue
+            if onset_date.month >= config["season_start_month"] and onset_date.year != season_year:
+                continue
             offsets.append((onset_date - season_start).days)
+            valid.append(diagnostic)
         except Exception:
             continue
 
@@ -225,12 +253,14 @@ def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
             "p10_onset_date": None,
             "median_onset_date": None,
             "p90_onset_date": None,
+            "onset_spread_days": None,
+            "onset_variability_std": None,
             "trigger_count": 0,
             "series": [],
         }
 
     median_year = int(valid[len(valid) // 2]["season_year"])
-    season_start = datetime(median_year, 11, 1).date()
+    season_start = datetime(median_year, config["season_start_month"], 1).date()
 
     def date_at(pct: float):
         value = percentile(offsets, pct)
@@ -242,6 +272,8 @@ def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
         "p10_onset_date": date_at(0.10),
         "median_onset_date": date_at(0.50),
         "p90_onset_date": date_at(0.90),
+        "onset_spread_days": round(percentile(offsets, 0.90) - percentile(offsets, 0.10)) if len(offsets) else None,
+        "onset_variability_std": round(float(np.std(offsets)), 2) if len(offsets) else None,
         "trigger_count": len(offsets),
         "series": [
             {
@@ -253,6 +285,111 @@ def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
             for diagnostic in valid
         ],
     }
+
+
+@lru_cache(maxsize=1)
+def load_raw_chirps_dataset():
+    try:
+        from ingestion.chirps_loader import load_chirps
+        from processing.grid_extractor import DEFAULT_BOUNDS
+    except Exception:
+        return None
+
+    if not RAW_CHIRPS_DIR.exists():
+        return None
+
+    try:
+        return load_chirps(RAW_CHIRPS_DIR, bounds=DEFAULT_BOUNDS["malawi"])
+    except Exception:
+        return None
+
+
+def season_year_for_date(date: pd.Timestamp, start_month: int = 11, end_month: int = 4) -> int | None:
+    if date.month >= start_month:
+        return int(date.year)
+    if date.month <= end_month:
+        return int(date.year - 1)
+    return None
+
+
+def onset_candidate_events_for_grid(grid_id: str, start_year: int | None, end_year: int | None) -> dict:
+    config = load_algorithm_config()
+    results = normalize_results(load_results())
+    result = next((row for row in results if str(row.get("grid_id")) == str(grid_id)), None)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Grid cell {grid_id} not found.")
+
+    ds = load_raw_chirps_dataset()
+    if ds is None:
+        return {"events": [], "season_count": 0}
+
+    lat = float(result.get("latitude") or result.get("centroid_lat") or 0)
+    lon = float(result.get("longitude") or result.get("centroid_lon") or 0)
+    cell = ds["precip"].sel(lat=lat, lon=lon, method="nearest")
+    dates = pd.to_datetime(cell["time"].values)
+    rain = np.asarray(cell.values, dtype=float)
+    frame = pd.DataFrame({"date": dates, "rain": rain})
+    rainy_months = list(range(config["season_start_month"], 13)) + list(range(1, config["season_end_month"] + 1))
+    frame = frame[frame["date"].dt.month.isin(rainy_months)].copy()
+    frame["season_year"] = frame["date"].apply(
+        lambda value: season_year_for_date(value, config["season_start_month"], config["season_end_month"])
+    )
+    frame = frame.dropna(subset=["season_year"])
+    frame["season_year"] = frame["season_year"].astype(int)
+    if start_year is not None:
+        frame = frame[frame["season_year"] >= start_year]
+    if end_year is not None:
+        frame = frame[frame["season_year"] <= end_year]
+    enabled_years = set(config.get("enabled_season_years") or [])
+    if enabled_years:
+        frame = frame[frame["season_year"].isin(enabled_years)]
+
+    accepted_by_season = {
+        int(item["season_year"]): str(item.get("onset_date"))
+        for item in build_season_diagnostics_from_result(result)
+        if item.get("onset_detected") and item.get("onset_date") and item.get("season_year") is not None
+    }
+
+    events = []
+    for season_year, group in frame.groupby("season_year"):
+        group = group.sort_values("date")
+        season_rain = group["rain"].to_numpy(dtype=float)
+        season_dates = group["date"].to_list()
+        trigger_window = config["onset_trigger_window_days"]
+        persistence_window = config["persistence_window_days"]
+        if season_rain.size < max(trigger_window, persistence_window):
+            continue
+        rolling_sum = np.convolve(season_rain, np.ones(trigger_window, dtype=float), mode="valid")
+        candidate_indices = np.where(rolling_sum >= config["onset_trigger_mm"])[0] + (trigger_window - 1)
+        accepted_date = accepted_by_season.get(int(season_year))
+        for index in candidate_indices:
+            next_window = season_rain[index:index + persistence_window]
+            if next_window.size < persistence_window:
+                continue
+            dry_spells = []
+            current_spell = 0
+            for value in next_window:
+                if float(value) < config["dry_day_threshold_mm"]:
+                    current_spell += 1
+                elif current_spell:
+                    dry_spells.append(current_spell)
+                    current_spell = 0
+            if current_spell:
+                dry_spells.append(current_spell)
+            if any(spell >= config["persistence_dry_spell_days"] for spell in dry_spells):
+                continue
+            date = pd.Timestamp(season_dates[index])
+            season_start = datetime(int(season_year), config["season_start_month"], 1).date()
+            events.append({
+                "season": f"{int(season_year)}-{str(int(season_year) + 1)[-2:]}",
+                "season_year": int(season_year),
+                "flag_date": date.isoformat(),
+                "day_offset": (date.date() - season_start).days,
+                "rainfall_3day_total": round(float(rolling_sum[index - (trigger_window - 1)]), 2),
+                "accepted_onset": bool(accepted_date and date.date().isoformat() in accepted_date),
+            })
+
+    return {"events": events, "season_count": len({event["season_year"] for event in events})}
 
 
 def nearest_grid(lon: float, lat: float, results: list[dict]) -> dict | None:
@@ -613,6 +750,118 @@ class PipelineRunRequest(BaseModel):
     region: str = "malawi"
 
 
+class AlgorithmConfigRequest(BaseModel):
+    season_start_month: int = 11
+    season_end_month: int = 4
+    enabled_season_years: list[int] = []
+    onset_trigger_mm: float = 25.0
+    onset_trigger_window_days: int = 3
+    persistence_window_days: int = 20
+    persistence_dry_spell_days: int = 10
+    dry_day_threshold_mm: float = 1.0
+    dry_spell_threshold_days: list[int] = [5, 7, 9]
+
+
+class AdminSessionRequest(BaseModel):
+    access_code: str
+
+
+def base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def sign_admin_payload(payload: str) -> str:
+    return hmac.new(ADMIN_SESSION_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def create_admin_token() -> str:
+    payload = {
+        "scope": "admin",
+        "exp": int(datetime.now(timezone.utc).timestamp()) + ADMIN_SESSION_TTL_SECONDS,
+        "nonce": str(uuid.uuid4()),
+    }
+    encoded_payload = base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    return f"{encoded_payload}.{sign_admin_payload(encoded_payload)}"
+
+
+def verify_admin_token(token: str | None) -> bool:
+    if not token or "." not in token:
+        return False
+    encoded_payload, signature = token.rsplit(".", 1)
+    if not hmac.compare_digest(signature, sign_admin_payload(encoded_payload)):
+        return False
+    try:
+        payload = json.loads(base64url_decode(encoded_payload))
+    except Exception:
+        return False
+    return payload.get("scope") == "admin" and int(payload.get("exp") or 0) > int(datetime.now(timezone.utc).timestamp())
+
+
+def require_admin_session(request: FastAPIRequest):
+    token = request.headers.get("x-admin-token", "")
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not verify_admin_token(token):
+        raise HTTPException(status_code=401, detail="Admin access required.")
+    return True
+
+
+def infer_season_year_from_filename(filename: str) -> int | None:
+    match = re.search(r"(?:19|20)\d{2}", filename)
+    if not match:
+        return None
+    return int(match.group(0))
+
+
+def extract_raw_dataset_years() -> list[int]:
+    if not RAW_CHIRPS_DIR.exists():
+        return []
+
+    years = set()
+    for dataset_path in RAW_CHIRPS_DIR.iterdir():
+        if not dataset_path.is_file():
+            continue
+        if dataset_path.suffix.lower() not in ALLOWED_RAINFALL_DATASET_EXTENSIONS:
+            continue
+        year = infer_season_year_from_filename(dataset_path.name)
+        if year:
+            years.add(year)
+    return sorted(years)
+
+
+def available_dataset_years(results: list[dict] | None = None) -> list[int]:
+    raw_years = extract_raw_dataset_years()
+    if raw_years:
+        return raw_years
+    if results is None:
+        try:
+            results = load_results()
+        except Exception:
+            results = []
+    return extract_available_years(results)
+
+
+def active_configured_years(config: dict, available_years: list[int]) -> list[int]:
+    enabled_years = sorted({
+        int(year)
+        for year in config.get("enabled_season_years", [])
+        if str(year).isdigit()
+    })
+    if not enabled_years:
+        return available_years
+
+    available = set(available_years)
+    if not available:
+        return enabled_years
+    return [year for year in enabled_years if year in available]
+
+
 app = FastAPI(
     title="GRODE Backend API",
     description="API for rainfall-risk pipeline execution and result retrieval.",
@@ -660,6 +909,110 @@ def root():
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.post("/api/admin/session")
+def create_admin_session(payload: AdminSessionRequest):
+    if not hmac.compare_digest(payload.access_code.strip(), ADMIN_ACCESS_CODE):
+        raise HTTPException(status_code=401, detail="Invalid admin access code.")
+    return {
+        "status": "authenticated",
+        "token": create_admin_token(),
+        "expires_in_seconds": ADMIN_SESSION_TTL_SECONDS,
+    }
+
+
+@app.get("/api/admin/session")
+def get_admin_session(_: bool = Depends(require_admin_session)):
+    return {"status": "authenticated"}
+
+
+@app.get("/api/admin/algorithm-config")
+def get_algorithm_config(_: bool = Depends(require_admin_session)):
+    config = load_algorithm_config()
+    available_years = available_dataset_years()
+    return {
+        "config": config,
+        "defaults": DEFAULT_ALGORITHM_CONFIG,
+        "available_years": available_years,
+        "active_years": active_configured_years(config, available_years),
+    }
+
+
+@app.put("/api/admin/algorithm-config")
+def update_algorithm_config(payload: AlgorithmConfigRequest, _: bool = Depends(require_admin_session)):
+    saved = save_algorithm_config(payload.dict())
+    _load_results_cached.cache_clear()
+    load_raw_chirps_dataset.cache_clear()
+    return {
+        "status": "saved",
+        "config": saved,
+        "message": "Configuration saved. Rerun the rainfall pipeline for outputs to use the new settings.",
+    }
+
+
+@app.post("/api/admin/algorithm-config/upload-season")
+async def upload_season_dataset(
+    request: FastAPIRequest,
+    filename: str = Query(..., min_length=1),
+    season_year: int | None = Query(default=None),
+    _: bool = Depends(require_admin_session),
+):
+    safe_filename = Path(filename).name
+    if not safe_filename or safe_filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Provide a valid dataset filename.")
+
+    extension = Path(safe_filename).suffix.lower()
+    if extension not in ALLOWED_RAINFALL_DATASET_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_RAINFALL_DATASET_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Unsupported rainfall dataset type. Use one of: {allowed}.")
+
+    RAW_CHIRPS_DIR.mkdir(parents=True, exist_ok=True)
+    target_path = RAW_CHIRPS_DIR / safe_filename
+    size_bytes = 0
+
+    try:
+        with target_path.open("wb") as output:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size_bytes += len(chunk)
+                output.write(chunk)
+    except Exception as exc:
+        if target_path.exists() and size_bytes == 0:
+            target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Could not save rainfall dataset: {exc}") from exc
+
+    if size_bytes == 0:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded rainfall dataset was empty.")
+
+    resolved_year = season_year or infer_season_year_from_filename(safe_filename)
+    config = load_algorithm_config()
+    if resolved_year:
+        active_years = set(config.get("enabled_season_years") or [])
+        if not active_years:
+            active_years.update(available_dataset_years())
+        active_years.add(int(resolved_year))
+        config["enabled_season_years"] = sorted(active_years)
+        config = save_algorithm_config(config)
+
+    _load_results_cached.cache_clear()
+    load_raw_chirps_dataset.cache_clear()
+
+    return {
+        "status": "uploaded",
+        "filename": safe_filename,
+        "saved_to": str(target_path),
+        "size_bytes": size_bytes,
+        "season_year": resolved_year,
+        "config": config,
+        "message": (
+            f"{safe_filename} was saved to backend/algorithms/data/raw"
+            + (f" and registered as the {resolved_year}-{str(resolved_year + 1)[-2:]} season." if resolved_year else ".")
+            + " Rerun the rainfall pipeline to generate updated outputs."
+        ),
+    }
 
 
 @app.get("/api/results")
@@ -783,7 +1136,7 @@ def get_grid_history(grid_id: str):
 
 @app.get("/api/seasons/years")
 def get_available_season_years():
-    years = extract_available_years(load_results())
+    years = available_dataset_years()
     ranges = []
     if years:
         ranges.append({"label": "All Seasons", "value": "all", "start_year": years[0], "end_year": years[-1]})
@@ -801,21 +1154,24 @@ def get_available_season_years():
 @app.get("/api/dashboard/overview")
 def get_dashboard_overview():
     results = normalize_results(load_results())
+    config = load_algorithm_config()
+    dataset_years = available_dataset_years(results)
+    active_years = active_configured_years(config, dataset_years)
+
     if not results:
         return {
             "grid_count": 0,
-            "season_count": 0,
-            "available_years": [],
+            "season_count": len(active_years),
+            "available_years": active_years,
             "average_onset_probability": 0,
             "average_false_onset_probability": 0,
             "average_dry_spell_probability": 0,
         }
 
-    years = extract_available_years(results)
     return {
         "grid_count": len(results),
-        "season_count": len(years),
-        "available_years": years,
+        "season_count": len(active_years),
+        "available_years": active_years,
         "average_onset_probability": round(sum(probability_for_onset(result) for result in results) / len(results), 3),
         "average_false_onset_probability": round(sum(float(result.get("false_onset_probability") or 0) for result in results) / len(results), 3),
         "average_dry_spell_probability": round(sum(dry_spell_probability(result) for result in results) / len(results), 3),
@@ -840,6 +1196,12 @@ def search_grid_locations(q: str = Query(..., min_length=2), limit: int = Query(
             "onset_probability": probability_for_onset(row),
             "false_onset_probability": float(row.get("false_onset_probability") or 0),
             "dry_spell_probability": dry_spell_probability(row),
+            "dry_spell_probability_5day": dry_spell_probability_for_threshold(row, 5),
+            "dry_spell_probability_7day": dry_spell_probability_for_threshold(row, 7),
+            "dry_spell_probability_9day": dry_spell_probability_for_threshold(row, 9),
+            "early_establishment_stress_probability": float(row.get("early_establishment_stress_probability", dry_spell_probability(row)) or 0),
+            "onset_spread_days": row.get("onset_spread_days"),
+            "onset_variability_std": row.get("onset_variability_std"),
             "seasons_analyzed": row.get("seasons_analyzed") or 0,
             "seasons_with_detected_onset": row.get("seasons_with_detected_onset") or 0,
             "first_detected_onset_date": row.get("first_detected_onset_date"),
@@ -913,6 +1275,21 @@ def get_onset_timeline(
         "start_year": start_year,
         "end_year": end_year,
         **timeline,
+    }
+
+
+@app.get("/api/onset/trigger-events")
+def get_onset_trigger_events(
+    grid_id: str = Query(...),
+    start_year: int | None = Query(default=None),
+    end_year: int | None = Query(default=None),
+):
+    payload = onset_candidate_events_for_grid(grid_id, start_year, end_year)
+    return {
+        "grid_id": grid_id,
+        "start_year": start_year,
+        "end_year": end_year,
+        **payload,
     }
 
 
@@ -1257,6 +1634,12 @@ def search_locations(name: str = Query(...), limit: int = Query(default=10)):
             "onset_probability": probability_for_onset(grid),
             "false_onset_probability": float(grid.get("false_onset_probability") or 0),
             "dry_spell_probability": dry_spell_probability(grid),
+            "dry_spell_probability_5day": dry_spell_probability_for_threshold(grid, 5),
+            "dry_spell_probability_7day": dry_spell_probability_for_threshold(grid, 7),
+            "dry_spell_probability_9day": dry_spell_probability_for_threshold(grid, 9),
+            "early_establishment_stress_probability": float(grid.get("early_establishment_stress_probability", dry_spell_probability(grid)) or 0),
+            "onset_spread_days": grid.get("onset_spread_days"),
+            "onset_variability_std": grid.get("onset_variability_std"),
             "seasons_analyzed": grid.get("seasons_analyzed") or 0,
             "seasons_with_detected_onset": grid.get("seasons_with_detected_onset") or 0,
             "first_detected_onset_date": grid.get("first_detected_onset_date"),
@@ -1514,6 +1897,10 @@ def normalize_results(results: list[dict]) -> list[dict]:
         row = dict(result)
         if "dry_spell_probability" not in row:
             row["dry_spell_probability"] = row.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        row.setdefault("dry_spell_probability_5day", row.get("dry_spell_probability", 0.0))
+        row.setdefault("dry_spell_probability_7day", 0.0)
+        row.setdefault("dry_spell_probability_9day", 0.0)
+        row.setdefault("early_establishment_stress_probability", row.get("dry_spell_probability", 0.0))
         if "dry_spell_interpretation" not in row:
             row["dry_spell_interpretation"] = row.get(LEGACY_DRY_INTERPRETATION_KEY)
         row.pop(LEGACY_DRY_PROBABILITY_KEY, None)

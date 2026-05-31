@@ -5,6 +5,7 @@ from utils.timeseries_utils import detect_dry_spells_vectorized
 DRY_DAY_THRESHOLD_MM = 1.0
 POST_ONSET_WINDOW_DAYS = 20
 DRY_SPELL_MIN_LENGTH_DAYS = 5
+ESTABLISHMENT_STRESS_THRESHOLDS = (5, 7, 9)
 
 
 def detect_dry_spell_lengths(
@@ -70,6 +71,26 @@ def calculate_dry_spell_probability(
             dry_spell_count += 1
 
     return dry_spell_count / len(seasons) if seasons else 0
+
+
+def calculate_dry_spell_probabilities(
+    seasons,
+    onset_indices,
+    thresholds=ESTABLISHMENT_STRESS_THRESHOLDS,
+    window_days=POST_ONSET_WINDOW_DAYS,
+    dry_day_threshold=DRY_DAY_THRESHOLD_MM,
+):
+    """Return post-onset establishment stress probabilities for 5/7/9-day dry spells."""
+    probabilities = {}
+    for threshold in thresholds:
+        probabilities[int(threshold)] = calculate_dry_spell_probability(
+            seasons,
+            onset_indices,
+            window_days=window_days,
+            min_spell_length=int(threshold),
+            dry_day_threshold=dry_day_threshold,
+        )
+    return probabilities
 
 
 def calculate_stress_fast(seasons, onset_indices):

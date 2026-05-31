@@ -22,27 +22,27 @@ import {
 const FAQS = [
   {
     q: "What does the 'Onset Date' mean for my farm?",
-    a: "The onset date is the first day of consistent rainfall (≥20mm over 3 consecutive days) that reliably marks the start of the growing season. It is determined by historical data and current forecast models for your district.",
+    a: "The onset date is the first valid rainy-season trigger for a grid cell: at least 25mm over 3 consecutive days, followed by no 10-day dry spell in the next 20 days.",
   },
   {
     q: "How is False-Onset Risk calculated?",
-    a: "False-Onset Risk combines short-term rainfall probability with historical dry-spell frequency. A 'High' risk means there is a >70% chance that initial rains will be followed by a dry spell lasting 14 days or more — enough to kill young seedlings.",
+    a: "False-onset risk is calculated from early rainfall triggers that reach at least 25mm in 3 days but fail persistence because a 10+ day dry spell follows within 20 days before the stable season is established.",
   },
   {
-    q: "What satellite data sources does Climate Intel use?",
-    a: "We fuse three primary datasets: TAMSAT v3.1 (microwave-based rainfall estimation), CHIRPS historical baselines, and DCCMS Malawi national forecast output. Soil moisture is sourced from NASA SMAP Level-3 composites.",
+    q: "What satellite data sources does GRODE use?",
+    a: "GRODE currently uses CHIRPS rainfall data as the rainfall baseline, combined with Malawi boundary and grid layers for district, area, and grid-level diagnostics.",
   },
   {
     q: "How often is the dashboard data refreshed?",
-    a: "Rainfall and risk indicators are updated every 3 hours from TAMSAT and DCCMS feeds. Soil moisture maps are updated daily. Historical baselines are static per-season.",
+    a: "The dashboard reflects the latest CHIRPS datasets and pipeline outputs loaded into the backend environment. Refresh frequency depends on when the rainfall pipeline is rerun.",
   },
   {
     q: "Can I change my default district?",
-    a: "Yes. Navigate to Settings → Region & Language → Default District, and select any of the five supported districts. The dashboard will reload with data for your chosen region.",
+    a: "Yes. Use the district and area search controls to select the geographical area you want to analyze. The system links that area to the nearest rainfall grid cell.",
   },
   {
-    q: "What is the difference between 'Farmer' and 'Expert' mode?",
-    a: "'Farmer' mode simplifies risk levels into plain-language guidance. 'Expert' mode surfaces raw meteorological variables, confidence intervals, and downloadable model outputs for agronomists and researchers.",
+    q: "What is early establishment stress?",
+    a: "It is the chance that a valid onset is followed by shorter dry spells, such as 5, 7, or 9 consecutive dry days, during the first 20 days after onset.",
   },
 ]
 

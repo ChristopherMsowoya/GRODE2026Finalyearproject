@@ -47,6 +47,9 @@ const responseFields = [
   "onset_probability: true onset detection probability",
   "false_onset_probability: probability that early rainfall is followed by dry conditions",
   "dry_spell_probability: probability of prolonged dry spell conditions",
+  "dry_spell_probability_5day / 7day / 9day: establishment stress probabilities after valid onset",
+  "onset_spread_days: P90 minus P10 onset timing",
+  "onset_variability_std: standard deviation of onset timing",
   "centroid_lat / centroid_lon: grid-cell centre coordinates",
   "seasons_analyzed: number of rainfall seasons included",
 ]

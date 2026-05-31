@@ -58,6 +58,10 @@ def _load_local_results_cached(_mtime_ns: int) -> list[dict]:
         result = dict(row)
         if "dry_spell_probability" not in result:
             result["dry_spell_probability"] = result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        result.setdefault("dry_spell_probability_5day", result.get("dry_spell_probability", 0.0))
+        result.setdefault("dry_spell_probability_7day", 0.0)
+        result.setdefault("dry_spell_probability_9day", 0.0)
+        result.setdefault("early_establishment_stress_probability", result.get("dry_spell_probability", 0.0))
         if "dry_spell_interpretation" not in result:
             result["dry_spell_interpretation"] = result.get(LEGACY_DRY_INTERPRETATION_KEY)
         result.pop(LEGACY_DRY_PROBABILITY_KEY, None)
@@ -209,6 +213,12 @@ def _diagnostic_select_sql() -> str:
                 nullif(latest.result->>%(legacy_dry_probability_key)s, '')::double precision,
                 0
             ) as dry_spell_probability,
+            coalesce(nullif(latest.result->>'dry_spell_probability_5day', '')::double precision, 0) as dry_spell_probability_5day,
+            coalesce(nullif(latest.result->>'dry_spell_probability_7day', '')::double precision, 0) as dry_spell_probability_7day,
+            coalesce(nullif(latest.result->>'dry_spell_probability_9day', '')::double precision, 0) as dry_spell_probability_9day,
+            coalesce(nullif(latest.result->>'early_establishment_stress_probability', '')::double precision, 0) as early_establishment_stress_probability,
+            nullif(latest.result->>'onset_spread_days', '')::integer as onset_spread_days,
+            nullif(latest.result->>'onset_variability_std', '')::double precision as onset_variability_std,
             case
                 when nullif(latest.result->>'seasons_analyzed', '')::double precision > 0
                     then nullif(latest.result->>'seasons_with_detected_onset', '')::double precision

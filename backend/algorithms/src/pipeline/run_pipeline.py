@@ -13,13 +13,14 @@ from ingestion.chirps_loader import load_chirps
 from processing.grid_extractor import DEFAULT_BOUNDS, iter_grids_fast
 from utils.timeseries_utils import split_by_rainy_season
 from algorithms.onset import detect_onset_details_fast
-from algorithms.false_onset import calculate_false_onset_fast
+from algorithms.false_onset import calculate_false_onset_probability, false_onset_event_for_season
 from algorithms.dry_spell import (
-    DRY_DAY_THRESHOLD_MM,
-    DRY_SPELL_MIN_LENGTH_DAYS,
+    ESTABLISHMENT_STRESS_THRESHOLDS,
     calculate_dry_spell_probability,
+    calculate_dry_spell_probabilities,
     dry_spell_event_for_season,
 )
+from config.algorithm_config import load_algorithm_config
 from models.result_schema import build_result
 
 # DB integration: write pipeline run + per-grid JSON results linked to nearest grid_cells
@@ -61,6 +62,7 @@ def resolve_bounds(region=None, bounds=None):
 
 def run(filepath=None, region="malawi", bounds=None):
     input_path = resolve_input_path(filepath)
+    config = load_algorithm_config()
 
     if not input_path.exists():
         raise FileNotFoundError(
@@ -74,7 +76,15 @@ def run(filepath=None, region="malawi", bounds=None):
     results = []
 
     for i, grid in enumerate(iter_grids_fast(ds)):
-        seasons = split_by_rainy_season(grid["dates"], grid["rainfall"])
+        seasons = split_by_rainy_season(
+            grid["dates"],
+            grid["rainfall"],
+            start_month=config["season_start_month"],
+            end_month=config["season_end_month"],
+        )
+        enabled_years = set(config.get("enabled_season_years") or [])
+        if enabled_years:
+            seasons = [season for season in seasons if season.get("season_year") in enabled_years]
 
         onset_dates = []
         onset_indices = []
@@ -82,23 +92,55 @@ def run(filepath=None, region="malawi", bounds=None):
         for season in seasons:
             onset, onset_index = detect_onset_details_fast(
                 season["rainfall"],
-                season["dates"]
+                season["dates"],
+                trigger_threshold=config["onset_trigger_mm"],
+                trigger_window=config["onset_trigger_window_days"],
+                persistence_window=config["persistence_window_days"],
+                failure_dry_spell_days=config["persistence_dry_spell_days"],
+                dry_day_threshold=config["dry_day_threshold_mm"],
             )
             onset_dates.append(onset)
             onset_indices.append(onset_index)
 
-        false_prob = calculate_false_onset_fast(seasons, onset_indices)
-        stress_prob = calculate_dry_spell_probability(seasons, onset_indices)
+        false_prob = calculate_false_onset_probability(
+            seasons,
+            onset_indices,
+            trigger_threshold=config["onset_trigger_mm"],
+            trigger_window=config["onset_trigger_window_days"],
+            persistence_window=config["persistence_window_days"],
+            failure_dry_spell_days=config["persistence_dry_spell_days"],
+        )
+        dry_spell_probabilities = calculate_dry_spell_probabilities(
+            seasons,
+            onset_indices,
+            thresholds=config["dry_spell_threshold_days"],
+            window_days=config["persistence_window_days"],
+            dry_day_threshold=config["dry_day_threshold_mm"],
+        )
+        stress_prob = dry_spell_probabilities.get(5, calculate_dry_spell_probability(seasons, onset_indices))
         valid_onset_dates = [date for date in onset_dates if date is not None]
 
         season_diagnostics = []
         for season_index, season in enumerate(seasons):
             onset_index = onset_indices[season_index]
-            dry_event = dry_spell_event_for_season(season, onset_index)
-            false_event = dry_spell_event_for_season(
+            dry_events = {
+                threshold: dry_spell_event_for_season(
+                    season,
+                    onset_index,
+                    window_days=config["persistence_window_days"],
+                    min_spell_length=threshold,
+                    dry_day_threshold=config["dry_day_threshold_mm"],
+                )
+                for threshold in ESTABLISHMENT_STRESS_THRESHOLDS
+            }
+            dry_event = dry_events[5]
+            false_event = false_onset_event_for_season(
                 season,
                 onset_index,
-                min_spell_length=10,
+                trigger_threshold=config["onset_trigger_mm"],
+                trigger_window=config["onset_trigger_window_days"],
+                persistence_window=config["persistence_window_days"],
+                failure_dry_spell_days=config["persistence_dry_spell_days"],
             )
             season_year = season.get("season_year")
             onset_detected = onset_index is not None
@@ -111,12 +153,23 @@ def run(filepath=None, region="malawi", bounds=None):
                 "onset_date": str(onset_dates[season_index]) if onset_dates[season_index] is not None else None,
                 "false_onset_detected": false_event["detected"],
                 "false_onset_probability": 1.0 if false_event["detected"] else 0.0,
+                "false_trigger_count": false_event["false_trigger_count"],
+                "first_false_trigger_date": str(false_event["first_trigger_date"]) if false_event["first_trigger_date"] is not None else None,
+                "first_false_trigger_rainfall_mm": false_event["first_trigger_rainfall_mm"],
+                "false_onset_max_failure_dry_spell_days": false_event["max_failure_dry_spell_days"],
                 "dry_spell_detected": dry_event["detected"],
                 "dry_spell_probability": 1.0 if dry_event["detected"] else 0.0,
+                "dry_spell_detected_5day": dry_events[5]["detected"],
+                "dry_spell_detected_7day": dry_events[7]["detected"],
+                "dry_spell_detected_9day": dry_events[9]["detected"],
+                "dry_spell_probability_5day": 1.0 if dry_events[5]["detected"] else 0.0,
+                "dry_spell_probability_7day": 1.0 if dry_events[7]["detected"] else 0.0,
+                "dry_spell_probability_9day": 1.0 if dry_events[9]["detected"] else 0.0,
                 "dry_spell_max_length_days": dry_event["max_dry_spell_length"],
                 "dry_day_count": dry_event["dry_day_count"],
-                "dry_day_threshold_mm": DRY_DAY_THRESHOLD_MM,
-                "dry_spell_min_length_days": DRY_SPELL_MIN_LENGTH_DAYS,
+                "dry_day_threshold_mm": config["dry_day_threshold_mm"],
+                "dry_spell_min_length_days": 5,
+                "algorithm_config": config,
             })
 
         onset_timeline = build_onset_timeline(season_diagnostics)
@@ -131,6 +184,7 @@ def run(filepath=None, region="malawi", bounds=None):
             seasons_with_detected_onset=len(valid_onset_dates),
             false_prob=false_prob,
             stress_prob=stress_prob,
+            dry_spell_probabilities=dry_spell_probabilities,
             season_diagnostics=season_diagnostics,
             onset_timeline=onset_timeline,
         )
@@ -189,6 +243,8 @@ def build_onset_timeline(season_diagnostics):
             "p10_onset_date": None,
             "median_onset_date": None,
             "p90_onset_date": None,
+            "onset_spread_days": None,
+            "onset_variability_std": None,
             "trigger_count": 0,
             "series": [],
         }
@@ -210,6 +266,8 @@ def build_onset_timeline(season_diagnostics):
         "p10_onset_date": offset_to_date(np.percentile(day_offsets, 10)),
         "median_onset_date": offset_to_date(np.percentile(day_offsets, 50)),
         "p90_onset_date": offset_to_date(np.percentile(day_offsets, 90)),
+        "onset_spread_days": int(round(np.percentile(day_offsets, 90) - np.percentile(day_offsets, 10))),
+        "onset_variability_std": round(float(np.std(day_offsets)), 2),
         "trigger_count": len(valid),
         "series": [
             {

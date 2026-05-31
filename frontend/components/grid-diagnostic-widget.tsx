@@ -52,6 +52,23 @@ export default function GridDiagnosticWidget({
   const gridData = selectedLocation?.gridData
   const selectedArea = selectedLocation?.areaName || selectedLocation?.ta || selectedLocation?.district || defaultDistrict
   const riskLevel = riskLevelForMetric(metricLabel, metricValue, Boolean(gridData))
+  const drySpellStressRows = metricLabel === "Dry Spell Probability" ? [
+    {
+      label: "5-Day Stress",
+      value: gridData ? percent(gridData.dry_spell_probability_5day ?? gridData.dry_spell_probability) : "Select an area grid",
+      tooltip: "Probability that the selected grid has a 5+ consecutive dry-day spell within 20 days after valid onset.",
+    },
+    {
+      label: "7-Day Stress",
+      value: gridData ? percent(gridData.dry_spell_probability_7day) : "Select an area grid",
+      tooltip: "Probability that the selected grid has a 7+ consecutive dry-day spell within 20 days after valid onset.",
+    },
+    {
+      label: "9-Day Stress",
+      value: gridData ? percent(gridData.dry_spell_probability_9day) : "Select an area grid",
+      tooltip: "Probability that the selected grid has a 9+ consecutive dry-day spell within 20 days after valid onset.",
+    },
+  ] : []
   const rows = [
     {
       label: "Selected Area",
@@ -68,6 +85,7 @@ export default function GridDiagnosticWidget({
       value: gridData ? percent(metricValue) : "Select an area grid",
       tooltip: `${metricLabel} for the selected grid cell only, calculated from the seasons available for that grid.`,
     }]),
+    ...drySpellStressRows,
     {
       label: "Risk Level",
       value: riskLevel,
