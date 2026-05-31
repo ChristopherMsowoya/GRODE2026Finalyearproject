@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: grode-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GRODE_ADMIN_ACCESS_CODE
+        sync: false
+      - key: GRODE_ADMIN_SESSION_SECRET
+        generateValue: true
+      - key: GRID_API_SOURCE
+        value: local
+
+  - type: web
+    name: grode-frontend
+    env: node
+    plan: free
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start -- -p $PORT
+    envVars:
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: https://grode-backend.onrender.com

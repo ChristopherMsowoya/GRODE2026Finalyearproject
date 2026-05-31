@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+numpy
+pandas
+xarray
+netcdf4
+supabase
+python-dotenv
+psycopg[binary]
+pyshp

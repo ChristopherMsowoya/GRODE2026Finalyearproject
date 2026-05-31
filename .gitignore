@@ -6,6 +6,7 @@ __pycache__/
 backend/algorithms/outputs/*.json
 backend/algorithms/outputs/*.csv
 backend/algorithms/data/raw/*.nc
+!backend/algorithms/outputs/results.json
 
 # Keep these folders in the repo structure
 !backend/algorithms/data/raw/.gitkeep

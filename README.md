@@ -234,3 +234,30 @@ Raw CHIRPS files are needed only if you want to rerun the algorithm.
 ## Command to run backend
 python -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8010
 
+## Public Deployment
+
+This repository includes `render.yaml`, so the easiest public deployment path is Render Blueprint.
+
+1. Push the latest branch to GitHub.
+2. Open Render and choose **New +** then **Blueprint**.
+3. Connect the GitHub repository and select `render.yaml`.
+4. Render will create:
+   - `grode-backend`
+   - `grode-frontend`
+5. Add backend environment variables in Render:
+
+```env
+GRODE_ADMIN_ACCESS_CODE=your-admin-code
+GRODE_ADMIN_SESSION_SECRET=your-long-random-secret
+GRID_API_SOURCE=local
+```
+
+6. Make sure the frontend has:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://grode-backend.onrender.com
+```
+
+7. Deploy the backend first, then redeploy the frontend so the frontend build uses the public backend URL.
+
+Raw CHIRPS NetCDF files are not deployed because they are too large. The deployed demo uses `backend/algorithms/outputs/results.json`.
