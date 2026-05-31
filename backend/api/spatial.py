@@ -81,6 +81,10 @@ def load_algorithm_results():
         row = dict(result)
         if "dry_spell_probability" not in row:
             row["dry_spell_probability"] = row.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        row.setdefault("dry_spell_probability_5day", row.get("dry_spell_probability", 0.0))
+        row.setdefault("dry_spell_probability_7day", 0.0)
+        row.setdefault("dry_spell_probability_9day", 0.0)
+        row.setdefault("early_establishment_stress_probability", row.get("dry_spell_probability", 0.0))
         row.pop(LEGACY_DRY_PROBABILITY_KEY, None)
         normalized.append(row)
     return normalized

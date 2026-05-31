@@ -1,0 +1,23 @@
+{
+  "season_start_month": 11,
+  "season_end_month": 4,
+  "enabled_season_years": [
+    2012,
+    2013,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "onset_trigger_mm": 25.0,
+  "onset_trigger_window_days": 3,
+  "persistence_window_days": 20,
+  "persistence_dry_spell_days": 10,
+  "dry_day_threshold_mm": 1.0,
+  "dry_spell_threshold_days": [
+    5,
+    7,
+    9
+  ]
+}

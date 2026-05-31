@@ -1,10 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { AlertCircle, ChevronDown, Loader2, MapPin } from "lucide-react"
+import { AlertCircle, ChevronDown, Loader2, Search } from "lucide-react"
 import {
-  fetchEnumerationAreas,
   fetchLocationDistricts,
+  searchAreasInDistrict,
   type EnumerationAreaOption,
 } from "@/lib/algorithm-api"
 
@@ -27,6 +27,12 @@ export interface GridOption {
   overall_risk_level: "Low" | "Medium" | "High"
   false_onset_probability: number
   dry_spell_probability: number
+  dry_spell_probability_5day?: number | null
+  dry_spell_probability_7day?: number | null
+  dry_spell_probability_9day?: number | null
+  early_establishment_stress_probability?: number | null
+  onset_spread_days?: number | null
+  onset_variability_std?: number | null
   onset_probability?: number | null
   seasons_analyzed: number
   seasons_with_detected_onset: number
@@ -60,15 +66,27 @@ function toGridOption(area: EnumerationAreaOption): GridOption | null {
   const grid = area.grid as Record<string, any> | null | undefined
   if (!grid || !area.grid_id) return null
   const seasons = Number(grid.seasons_analyzed ?? 0)
+  const gridLatitude = Number(grid.latitude ?? grid.centroid_lat ?? 0)
+  const gridLongitude = Number(grid.longitude ?? grid.centroid_lon ?? 0)
+  const areaLatitude = Number(area.area_latitude ?? gridLatitude)
+  const areaLongitude = Number(area.area_longitude ?? gridLongitude)
   return {
     grid_id: String(area.grid_id),
-    area_name: area.ea_name,
+    area_name: displayAreaName(area),
     area_place_type: "enumeration_area",
-    latitude: Number(grid.latitude ?? grid.centroid_lat ?? 0),
-    longitude: Number(grid.longitude ?? grid.centroid_lon ?? 0),
+    area_latitude: areaLatitude,
+    area_longitude: areaLongitude,
+    latitude: areaLatitude,
+    longitude: areaLongitude,
     overall_risk_level: grid.overall_risk_level ?? "Low",
     false_onset_probability: Number(grid.false_onset_probability ?? 0),
     dry_spell_probability: Number(grid.dry_spell_probability ?? 0),
+    dry_spell_probability_5day: Number(grid.dry_spell_probability_5day ?? grid.dry_spell_probability ?? 0),
+    dry_spell_probability_7day: Number(grid.dry_spell_probability_7day ?? 0),
+    dry_spell_probability_9day: Number(grid.dry_spell_probability_9day ?? 0),
+    early_establishment_stress_probability: Number(grid.early_establishment_stress_probability ?? grid.dry_spell_probability ?? 0),
+    onset_spread_days: grid.onset_spread_days ?? null,
+    onset_variability_std: grid.onset_variability_std ?? null,
     onset_probability: Number(grid.onset_probability ?? (
       grid.seasons_with_detected_onset && seasons ? grid.seasons_with_detected_onset / seasons : 0
     )),
@@ -81,15 +99,21 @@ function toGridOption(area: EnumerationAreaOption): GridOption | null {
   }
 }
 
+function displayAreaName(area: EnumerationAreaOption) {
+  return area.display_name?.trim() || area.ta_name?.trim() || area.ea_name?.trim() || `${area.district_name} area`
+}
+
 export default function LocationSelector({ onLocationChange, defaultDistrict = "Lilongwe" }: LocationSelectorProps) {
   const [districts, setDistricts] = useState<DistrictOption[]>([])
   const [areas, setAreas] = useState<EnumerationAreaOption[]>([])
   const [selectedDistrict, setSelectedDistrict] = useState(defaultDistrict)
   const [selectedAreaId, setSelectedAreaId] = useState("")
+  const [areaQuery, setAreaQuery] = useState("")
   const [districtOpen, setDistrictOpen] = useState(false)
-  const [areaOpen, setAreaOpen] = useState(false)
+  const [areaFocused, setAreaFocused] = useState(false)
   const [loadingDistricts, setLoadingDistricts] = useState(true)
   const [loadingAreas, setLoadingAreas] = useState(false)
+  const [searchingAreas, setSearchingAreas] = useState(false)
   const [eaAvailable, setEaAvailable] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -101,7 +125,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       if (controller.signal.aborted) return
       setDistricts(response.districts || [])
       setEaAvailable(response.available)
-      setMessage(response.available ? null : response.detail || "Enumeration areas are not loaded yet.")
+      setMessage(response.available ? null : response.detail || "Location areas are not loaded yet.")
       if (!response.districts.some((row) => row.district === selectedDistrict) && response.districts[0]) {
         setSelectedDistrict(response.districts[0].district)
       }
@@ -116,11 +140,11 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     async function loadAreas() {
       setLoadingAreas(true)
       setSelectedAreaId("")
-      const response = await fetchEnumerationAreas(selectedDistrict, controller.signal)
+      setAreaQuery("")
       if (controller.signal.aborted) return
-      setAreas(response.enumeration_areas || [])
-      setEaAvailable(response.available)
-      setMessage(response.available ? null : response.detail || "Enumeration areas are not loaded yet.")
+      setAreas([])
+      setEaAvailable(true)
+      setMessage(null)
       setLoadingAreas(false)
     }
     if (selectedDistrict) void loadAreas()
@@ -132,6 +156,32 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
     [areas, selectedAreaId]
   )
 
+  const visibleAreas = useMemo(() => areas.slice(0, 12), [areas])
+
+  useEffect(() => {
+    const query = areaQuery.trim()
+    if (query.length < 2 || !selectedDistrict) return
+
+    const controller = new AbortController()
+    const timeoutId = window.setTimeout(async () => {
+      setSearchingAreas(true)
+      try {
+        const response = await searchAreasInDistrict(selectedDistrict, query, controller.signal)
+        if (controller.signal.aborted) return
+        const nextAreas = response.enumeration_areas || []
+        setAreas(nextAreas)
+        setSelectedAreaId(nextAreas[0]?.id || "")
+      } finally {
+        if (!controller.signal.aborted) setSearchingAreas(false)
+      }
+    }, 250)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timeoutId)
+    }
+  }, [areaQuery, selectedDistrict])
+
   useEffect(() => {
     const gridData = selectedArea ? toGridOption(selectedArea) : null
     onLocationChange({
@@ -140,20 +190,41 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       taData: null,
       grid: gridData?.grid_id || null,
       gridData,
-      areaName: selectedArea?.ea_name || null,
+      areaName: selectedArea ? displayAreaName(selectedArea) : null,
       enumerationAreaId: selectedArea?.id || null,
     })
   }, [onLocationChange, selectedArea, selectedDistrict])
 
+  useEffect(() => {
+    const query = areaQuery.trim()
+    if (query.length < 2) {
+      setSelectedAreaId("")
+      return
+    }
+
+    const firstMatch = visibleAreas[0]
+    if (firstMatch && firstMatch.id !== selectedAreaId) {
+      setSelectedAreaId(firstMatch.id)
+    }
+  }, [areaQuery, visibleAreas, selectedAreaId])
+
   const chooseDistrict = useCallback((district: string) => {
     setSelectedDistrict(district)
+    setAreaQuery("")
     setDistrictOpen(false)
   }, [])
 
   const chooseArea = useCallback((areaId: string) => {
+    const area = areas.find((item) => item.id === areaId)
     setSelectedAreaId(areaId)
-    setAreaOpen(false)
-  }, [])
+    setAreaQuery(area ? displayAreaName(area) : "")
+    setAreaFocused(false)
+  }, [areas])
+
+  const chooseFirstVisibleArea = useCallback(() => {
+    const firstArea = visibleAreas[0]
+    if (firstArea) chooseArea(firstArea.id)
+  }, [chooseArea, visibleAreas])
 
   if (loadingDistricts) {
     return (
@@ -174,14 +245,9 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
       )}
 
       <div className="relative z-[1400] flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-widest text-[#6b7a8d]">
-          <MapPin className="h-3.5 w-3.5" />
-          EA selector:
-        </div>
-
         <div className="relative">
           <button
-            onClick={() => { setDistrictOpen((value) => !value); setAreaOpen(false) }}
+            onClick={() => { setDistrictOpen((value) => !value); setAreaFocused(false) }}
             className="flex items-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-4 py-2 text-[13px] font-semibold text-[#0F2A3D] shadow-sm"
           >
             <span className="max-w-[170px] truncate">{selectedDistrict} District</span>
@@ -197,44 +263,56 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
                   style={{ color: district.district === selectedDistrict ? "#1F7A63" : "#0F2A3D" }}
                 >
                   <span>{district.district}</span>
-                  <span className="text-[11px] text-[#6b7a8d]">{district.enumeration_area_count} EAs</span>
+                  <span className="text-[11px] text-[#6b7a8d]">{district.enumeration_area_count} areas</span>
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        <div className="relative">
-          <button
-            disabled={!eaAvailable || loadingAreas}
-            onClick={() => { setAreaOpen((value) => !value); setDistrictOpen(false) }}
-            className="flex items-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-4 py-2 text-[13px] font-semibold text-[#0F2A3D] shadow-sm disabled:cursor-not-allowed disabled:bg-[#f8fafc] disabled:text-[#94a3b8]"
-          >
+        <div className="relative w-[340px] max-w-full">
+          <div className="flex items-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] font-semibold text-[#0F2A3D] shadow-sm">
             {loadingAreas ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : searchingAreas ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-[#1F7A63]" />
             ) : (
-              <>
-                <span className="max-w-[220px] truncate">{selectedArea?.ea_name || "Select Enumeration Area"}</span>
-                <ChevronDown className={`h-3.5 w-3.5 text-[#6b7a8d] transition-transform ${areaOpen ? "rotate-180" : ""}`} />
-              </>
+              <Search className="h-3.5 w-3.5 text-[#6b7a8d]" />
             )}
-          </button>
-          {areaOpen && (
+            <input
+              disabled={!eaAvailable || loadingAreas}
+              value={areaQuery}
+              onFocus={() => { setAreaFocused(true); setDistrictOpen(false) }}
+              onChange={(event) => setAreaQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  chooseFirstVisibleArea()
+                }
+              }}
+              placeholder={`Search area in ${selectedDistrict}`}
+              className="w-full bg-transparent text-[13px] font-semibold text-[#0F2A3D] outline-none placeholder:text-[#94a3b8] disabled:cursor-not-allowed disabled:text-[#94a3b8]"
+            />
+          </div>
+          {areaFocused && areaQuery.trim().length >= 2 && (
             <div className="absolute left-0 top-full mt-1.5 max-h-80 w-80 overflow-y-auto rounded-lg border border-[#e2e8f0] bg-white p-1.5 shadow-xl" style={{ zIndex: 2000 }}>
-              {areas.map((area) => (
+              {visibleAreas.map((area) => (
                 <button
                   key={area.id}
                   onClick={() => chooseArea(area.id)}
+                  onMouseDown={(event) => event.preventDefault()}
                   className="block w-full rounded-md px-3 py-2 text-left hover:bg-[#f8fafc]"
                 >
-                  <span className="block text-[13px] font-bold text-[#0F2A3D]">{area.ea_name}</span>
+                  <span className="block text-[13px] font-bold text-[#0F2A3D]">{displayAreaName(area)}</span>
                   <span className="block text-[11px] font-semibold text-[#6b7a8d]">
-                    Grid {area.grid_id || "unmapped"} / {area.intersecting_grid_count || 0} intersections
+                    {area.district_name} / {area.place_type || "area"} / Grid {area.grid_id || "unmapped"}
                   </span>
                 </button>
               ))}
               {areas.length === 0 && (
-                <p className="px-3 py-3 text-[12px] font-medium text-[#6b7a8d]">No enumeration areas available for this district.</p>
+                <p className="px-3 py-3 text-[12px] font-medium text-[#6b7a8d]">
+                  {searchingAreas ? "Searching areas..." : `No matching area found in ${selectedDistrict}.`}
+                </p>
               )}
             </div>
           )}

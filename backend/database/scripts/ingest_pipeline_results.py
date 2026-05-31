@@ -158,15 +158,21 @@ def ingest_additional_tables(pipeline_run_id: str, baseline_start: int, baseline
                         "pipeline_run_id": pipeline_run_id,
                     }
 
-                    # dry spell
+                    # dry spell / early establishment stress thresholds
                     try:
-                        cur.execute(dry_sql, {
-                            **params_common,
-                            "dry_spell_threshold": int(data.get("dry_spell_min_length_days") or 5),
-                            "prob": float(dry_spell_prob) if dry_spell_prob is not None else 0.0,
-                            "total_seasons": seasons,
-                        })
-                        ingested["dry"] += 1
+                        threshold_probs = {
+                            5: data.get("dry_spell_probability_5day", dry_spell_prob),
+                            7: data.get("dry_spell_probability_7day"),
+                            9: data.get("dry_spell_probability_9day"),
+                        }
+                        for threshold, threshold_prob in threshold_probs.items():
+                            cur.execute(dry_sql, {
+                                **params_common,
+                                "dry_spell_threshold": threshold,
+                                "prob": float(threshold_prob) if threshold_prob is not None else 0.0,
+                                "total_seasons": seasons,
+                            })
+                            ingested["dry"] += 1
                     except Exception:
                         # table may not exist
                         pass

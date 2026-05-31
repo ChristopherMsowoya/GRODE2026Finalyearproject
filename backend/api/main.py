@@ -1,14 +1,23 @@
 from pathlib import Path
+import base64
+import hashlib
+import hmac
 import json
 import os
+import re
 import sys
 import uuid
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 from collections import Counter
+import csv
 from datetime import datetime, timezone, timedelta
 from functools import lru_cache
 import math
+import numpy as np
+import pandas as pd
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
@@ -61,20 +70,56 @@ except Exception as e:
 ALGORITHMS_SRC = PROJECT_ROOT / "backend" / "algorithms" / "src"
 ALGORITHMS_OUTPUTS = PROJECT_ROOT / "backend" / "algorithms" / "outputs"
 RESULTS_JSON_PATH = ALGORITHMS_OUTPUTS / "results.json"
+RAW_CHIRPS_DIR = PROJECT_ROOT / "backend" / "algorithms" / "data" / "raw"
 SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
+ALLOWED_RAINFALL_DATASET_EXTENSIONS = {".nc", ".nc4", ".cdf"}
+ADMIN_ACCESS_CODE = os.environ.get("GRODE_ADMIN_ACCESS_CODE") or os.environ.get("ADMIN_ACCESS_CODE") or "grode-admin-2026"
+ADMIN_SESSION_SECRET = os.environ.get("GRODE_ADMIN_SESSION_SECRET") or os.environ.get("SUPABASE_KEY") or ADMIN_ACCESS_CODE
+ADMIN_SESSION_TTL_SECONDS = int(os.environ.get("GRODE_ADMIN_SESSION_TTL_SECONDS", "28800"))
 
 if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
 
 from backend.src.pipeline.run_pipeline import run
+from config.algorithm_config import DEFAULT_ALGORITHM_CONFIG, load_algorithm_config, save_algorithm_config
 
 
 LEGACY_DRY_PROBABILITY_KEY = "crop_" + "stress_probability"
 LEGACY_DRY_INTERPRETATION_KEY = "crop_" + "stress_interpretation"
+EA_SHAPEFILE_PATH = SHAPEFILES_ROOT / "enum" / "ECHO2_prioritization.shp"
+GEONAMES_MW_PATH = PROJECT_ROOT / "backend" / "database" / "data" / "location_sources" / "MW" / "MW.txt"
+USE_LOCAL_LOCATION_API = os.environ.get("GRID_API_SOURCE", "local").lower() in {"local", "file", "files"}
+ENABLE_GOOGLE_PLACES = os.environ.get("ENABLE_GOOGLE_PLACES", "").lower() in {"1", "true", "yes"}
+GOOGLE_MAPS_API_KEY = (os.environ.get("GOOGLE_MAPS_API_KEY") or os.environ.get("GOOGLE_API_KEY")) if ENABLE_GOOGLE_PLACES else None
+
+# The HOTOSM populated-places file misses some well-known urban neighbourhood
+# names, especially Lilongwe "Area XX" names. Keep this tiny supplement local
+# so the demo does not depend on Google Places.
+CURATED_LOCATION_AREAS = [
+    {"name": "Area 18", "district": "Lilongwe", "longitude": 33.7790, "latitude": -13.9600, "place_type": "urban area"},
+    {"name": "Area 23", "district": "Lilongwe", "longitude": 33.7760, "latitude": -13.9550, "place_type": "urban area"},
+    {"name": "Area 24", "district": "Lilongwe", "longitude": 33.7870, "latitude": -13.9440, "place_type": "urban area"},
+    {"name": "Area 25", "district": "Lilongwe", "longitude": 33.7710, "latitude": -13.8730, "place_type": "urban area"},
+    {"name": "Area 36", "district": "Lilongwe", "longitude": 33.8010, "latitude": -13.9950, "place_type": "urban area"},
+    {"name": "Area 43", "district": "Lilongwe", "longitude": 33.7540, "latitude": -13.9620, "place_type": "urban area"},
+    {"name": "Area 47", "district": "Lilongwe", "longitude": 33.7460, "latitude": -13.9900, "place_type": "urban area"},
+    {"name": "Area 49", "district": "Lilongwe", "longitude": 33.7350, "latitude": -13.9760, "place_type": "urban area"},
+    {"name": "Area 50", "district": "Lilongwe", "longitude": 33.7420, "latitude": -13.9530, "place_type": "urban area"},
+    {"name": "Area 51", "district": "Lilongwe", "longitude": 33.7620, "latitude": -13.9290, "place_type": "urban area"},
+    {"name": "Area 52", "district": "Lilongwe", "longitude": 33.7810, "latitude": -13.9250, "place_type": "urban area"},
+    {"name": "Area 53", "district": "Lilongwe", "longitude": 33.7070, "latitude": -13.9300, "place_type": "urban area"},
+    {"name": "Area 58", "district": "Lilongwe", "longitude": 33.7240, "latitude": -13.9050, "place_type": "urban area"},
+]
 
 
 def dry_spell_probability(result: dict) -> float:
     return result.get("dry_spell_probability", result.get(LEGACY_DRY_PROBABILITY_KEY, 0.0))
+
+
+def dry_spell_probability_for_threshold(result: dict, threshold: int) -> float:
+    if threshold == 5:
+        return float(result.get("dry_spell_probability_5day", dry_spell_probability(result)) or 0)
+    return float(result.get(f"dry_spell_probability_{threshold}day") or 0)
 
 
 def extract_available_years(results: list[dict]) -> list[int]:
@@ -133,6 +178,9 @@ def build_season_diagnostics_from_result(result: dict) -> list[dict]:
             ),
             "false_onset_probability": result.get("false_onset_probability", 0),
             "dry_spell_probability": dry_spell_probability(result),
+            "dry_spell_probability_5day": dry_spell_probability_for_threshold(result, 5),
+            "dry_spell_probability_7day": dry_spell_probability_for_threshold(result, 7),
+            "dry_spell_probability_9day": dry_spell_probability_for_threshold(result, 9),
         }
         for index in range(seasons)
     ]
@@ -178,18 +226,25 @@ def percentile(values: list[float], pct: float) -> float | None:
 
 
 def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
-    valid = [
-        diagnostic
-        for diagnostic in diagnostics
-        if diagnostic.get("onset_detected") and diagnostic.get("onset_date") and diagnostic.get("season_year") is not None
-    ]
+    config = load_algorithm_config()
+    rainy_months = set(range(config["season_start_month"], 13)) | set(range(1, config["season_end_month"] + 1))
+    valid = []
     offsets = []
-    for diagnostic in valid:
+    for diagnostic in diagnostics:
+        if not (diagnostic.get("onset_detected") and diagnostic.get("onset_date") and diagnostic.get("season_year") is not None):
+            continue
         try:
             onset_date = datetime.fromisoformat(str(diagnostic["onset_date"])).date()
             season_year = int(diagnostic["season_year"])
-            season_start = datetime(season_year, 11, 1).date()
+            if onset_date.month not in rainy_months:
+                continue
+            season_start = datetime(season_year, config["season_start_month"], 1).date()
+            if onset_date.month <= config["season_end_month"] and onset_date.year == season_year:
+                continue
+            if onset_date.month >= config["season_start_month"] and onset_date.year != season_year:
+                continue
             offsets.append((onset_date - season_start).days)
+            valid.append(diagnostic)
         except Exception:
             continue
 
@@ -198,12 +253,14 @@ def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
             "p10_onset_date": None,
             "median_onset_date": None,
             "p90_onset_date": None,
+            "onset_spread_days": None,
+            "onset_variability_std": None,
             "trigger_count": 0,
             "series": [],
         }
 
     median_year = int(valid[len(valid) // 2]["season_year"])
-    season_start = datetime(median_year, 11, 1).date()
+    season_start = datetime(median_year, config["season_start_month"], 1).date()
 
     def date_at(pct: float):
         value = percentile(offsets, pct)
@@ -215,6 +272,8 @@ def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
         "p10_onset_date": date_at(0.10),
         "median_onset_date": date_at(0.50),
         "p90_onset_date": date_at(0.90),
+        "onset_spread_days": round(percentile(offsets, 0.90) - percentile(offsets, 0.10)) if len(offsets) else None,
+        "onset_variability_std": round(float(np.std(offsets)), 2) if len(offsets) else None,
         "trigger_count": len(offsets),
         "series": [
             {
@@ -228,6 +287,111 @@ def onset_timeline_from_diagnostics(diagnostics: list[dict]) -> dict:
     }
 
 
+@lru_cache(maxsize=1)
+def load_raw_chirps_dataset():
+    try:
+        from ingestion.chirps_loader import load_chirps
+        from processing.grid_extractor import DEFAULT_BOUNDS
+    except Exception:
+        return None
+
+    if not RAW_CHIRPS_DIR.exists():
+        return None
+
+    try:
+        return load_chirps(RAW_CHIRPS_DIR, bounds=DEFAULT_BOUNDS["malawi"])
+    except Exception:
+        return None
+
+
+def season_year_for_date(date: pd.Timestamp, start_month: int = 11, end_month: int = 4) -> int | None:
+    if date.month >= start_month:
+        return int(date.year)
+    if date.month <= end_month:
+        return int(date.year - 1)
+    return None
+
+
+def onset_candidate_events_for_grid(grid_id: str, start_year: int | None, end_year: int | None) -> dict:
+    config = load_algorithm_config()
+    results = normalize_results(load_results())
+    result = next((row for row in results if str(row.get("grid_id")) == str(grid_id)), None)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Grid cell {grid_id} not found.")
+
+    ds = load_raw_chirps_dataset()
+    if ds is None:
+        return {"events": [], "season_count": 0}
+
+    lat = float(result.get("latitude") or result.get("centroid_lat") or 0)
+    lon = float(result.get("longitude") or result.get("centroid_lon") or 0)
+    cell = ds["precip"].sel(lat=lat, lon=lon, method="nearest")
+    dates = pd.to_datetime(cell["time"].values)
+    rain = np.asarray(cell.values, dtype=float)
+    frame = pd.DataFrame({"date": dates, "rain": rain})
+    rainy_months = list(range(config["season_start_month"], 13)) + list(range(1, config["season_end_month"] + 1))
+    frame = frame[frame["date"].dt.month.isin(rainy_months)].copy()
+    frame["season_year"] = frame["date"].apply(
+        lambda value: season_year_for_date(value, config["season_start_month"], config["season_end_month"])
+    )
+    frame = frame.dropna(subset=["season_year"])
+    frame["season_year"] = frame["season_year"].astype(int)
+    if start_year is not None:
+        frame = frame[frame["season_year"] >= start_year]
+    if end_year is not None:
+        frame = frame[frame["season_year"] <= end_year]
+    enabled_years = set(config.get("enabled_season_years") or [])
+    if enabled_years:
+        frame = frame[frame["season_year"].isin(enabled_years)]
+
+    accepted_by_season = {
+        int(item["season_year"]): str(item.get("onset_date"))
+        for item in build_season_diagnostics_from_result(result)
+        if item.get("onset_detected") and item.get("onset_date") and item.get("season_year") is not None
+    }
+
+    events = []
+    for season_year, group in frame.groupby("season_year"):
+        group = group.sort_values("date")
+        season_rain = group["rain"].to_numpy(dtype=float)
+        season_dates = group["date"].to_list()
+        trigger_window = config["onset_trigger_window_days"]
+        persistence_window = config["persistence_window_days"]
+        if season_rain.size < max(trigger_window, persistence_window):
+            continue
+        rolling_sum = np.convolve(season_rain, np.ones(trigger_window, dtype=float), mode="valid")
+        candidate_indices = np.where(rolling_sum >= config["onset_trigger_mm"])[0] + (trigger_window - 1)
+        accepted_date = accepted_by_season.get(int(season_year))
+        for index in candidate_indices:
+            next_window = season_rain[index:index + persistence_window]
+            if next_window.size < persistence_window:
+                continue
+            dry_spells = []
+            current_spell = 0
+            for value in next_window:
+                if float(value) < config["dry_day_threshold_mm"]:
+                    current_spell += 1
+                elif current_spell:
+                    dry_spells.append(current_spell)
+                    current_spell = 0
+            if current_spell:
+                dry_spells.append(current_spell)
+            if any(spell >= config["persistence_dry_spell_days"] for spell in dry_spells):
+                continue
+            date = pd.Timestamp(season_dates[index])
+            season_start = datetime(int(season_year), config["season_start_month"], 1).date()
+            events.append({
+                "season": f"{int(season_year)}-{str(int(season_year) + 1)[-2:]}",
+                "season_year": int(season_year),
+                "flag_date": date.isoformat(),
+                "day_offset": (date.date() - season_start).days,
+                "rainfall_3day_total": round(float(rolling_sum[index - (trigger_window - 1)]), 2),
+                "accepted_onset": bool(accepted_date and date.date().isoformat() in accepted_date),
+            })
+
+    return {"events": events, "season_count": len({event["season_year"] for event in events})}
+
+
 def nearest_grid(lon: float, lat: float, results: list[dict]) -> dict | None:
     return min(
         results,
@@ -237,8 +401,465 @@ def nearest_grid(lon: float, lat: float, results: list[dict]) -> dict | None:
     )
 
 
+def clean_code(value: object) -> str:
+    text = str(value or "").strip()
+    try:
+        number = float(text)
+        if number.is_integer():
+            return str(int(number))
+    except ValueError:
+        pass
+    if text.endswith(".00000"):
+        return text[:-6]
+    return text
+
+
+@lru_cache(maxsize=1)
+def load_local_enumeration_areas() -> list[dict]:
+    try:
+        import shapefile
+    except Exception:
+        return []
+
+    if not EA_SHAPEFILE_PATH.exists():
+        return []
+
+    reader = shapefile.Reader(str(EA_SHAPEFILE_PATH))
+    areas = []
+    for index, shape_record in enumerate(reader.iterShapeRecords()):
+        props = shape_record.record.as_dict()
+        bbox = shape_record.shape.bbox if shape_record.shape.bbox else [0, 0, 0, 0]
+        lon = (float(bbox[0]) + float(bbox[2])) / 2
+        lat = (float(bbox[1]) + float(bbox[3])) / 2
+        ea_id = clean_code(props.get("EACODE") or props.get("id") or f"ea-{index + 1}")
+        district = str(props.get("DISTRICT") or props.get("district") or "Unknown").strip()
+        ta = str(props.get("TA") or props.get("TA3_name") or "").strip()
+        areas.append({
+            "id": ea_id,
+            "ea_name": f"EA {ea_id}",
+            "ta_name": ta or None,
+            "district_name": district,
+            "longitude": lon,
+            "latitude": lat,
+        })
+
+    return areas
+
+
+def local_enumeration_districts() -> list[dict]:
+    counts = Counter(area["district_name"] for area in load_local_enumeration_areas() if area.get("district_name"))
+    valid_districts = {
+        row["district"].lower()
+        for row in build_district_summaries()
+        if row.get("district") and row["district"] != "Unknown"
+    }
+    return [
+        {"district": district, "enumeration_area_count": count}
+        for district, count in sorted(counts.items())
+        if district != "Unknown" and district.lower() in valid_districts
+    ]
+
+
+def local_enumeration_areas_for_district(district: str) -> list[dict]:
+    district_lower = district.lower()
+    areas = [
+        area for area in load_local_enumeration_areas()
+        if area.get("district_name", "").lower() == district_lower
+    ]
+    results = normalize_results(load_results())
+    district_results = [
+        row for row in results
+        if (row.get("district_name") or row.get("district") or "").lower() == district_lower
+    ] or results
+
+    rows = []
+    for area in areas:
+        diagnostic = nearest_grid(float(area["longitude"]), float(area["latitude"]), district_results)
+        rows.append({
+            "id": area["id"],
+            "ea_name": area["ea_name"],
+            "ta_name": area["ta_name"],
+            "district_name": area["district_name"],
+            "area_latitude": area["latitude"],
+            "area_longitude": area["longitude"],
+            "grid_id": str(diagnostic.get("grid_id")) if diagnostic else None,
+            "overlap_fraction": None,
+            "contains_centroid": None,
+            "intersecting_grid_count": 1 if diagnostic else 0,
+            "grid": diagnostic,
+        })
+
+    return sorted(rows, key=lambda row: row["ea_name"])
+
+
+def district_feature_for_name(district: str) -> dict | None:
+    district_lower = district.lower()
+    try:
+        for feature in load_geojson_features(str(DISTRICTS_GEOJSON_PATH)):
+            props = feature.get("properties") or {}
+            name = props.get("DISTRICT") or props.get("shapeName") or props.get("name") or ""
+            if str(name).lower() == district_lower:
+                return feature
+    except Exception:
+        return None
+    return None
+
+
+@lru_cache(maxsize=1)
+def load_geonames_location_areas() -> list[dict]:
+    if not GEONAMES_MW_PATH.exists():
+        return []
+
+    rows: list[dict] = []
+    try:
+        with GEONAMES_MW_PATH.open("r", encoding="utf-8") as geonames_file:
+            for row in csv.reader(geonames_file, delimiter="\t"):
+                if len(row) < 19:
+                    continue
+                feature_class = row[6]
+                if feature_class != "P":
+                    continue
+                name = row[1].strip()
+                if len(name) < 2:
+                    continue
+                try:
+                    latitude = float(row[4])
+                    longitude = float(row[5])
+                    population = int(row[14] or 0)
+                except ValueError:
+                    continue
+
+                rows.append({
+                    "name": name,
+                    "place_type": row[7] or "populated place",
+                    "population": population or None,
+                    "longitude": longitude,
+                    "latitude": latitude,
+                    "source": "geonames",
+                    "geoname_id": row[0],
+                })
+    except OSError:
+        return []
+
+    return rows
+
+
+@lru_cache(maxsize=1)
+def local_location_area_catalog() -> list[dict]:
+    district_features = load_geojson_features(str(DISTRICTS_GEOJSON_PATH))
+    rows: list[dict] = []
+    seen = set()
+
+    candidates = [
+        {
+            "name": place["name"],
+            "place_type": place.get("place_type") or "place",
+            "population": place.get("population"),
+            "longitude": float(place["longitude"]),
+            "latitude": float(place["latitude"]),
+            "source": "local-place",
+        }
+        for place in search_places("", 10000)
+    ]
+    candidates.extend(load_geonames_location_areas())
+    candidates.extend(
+        {
+            "name": area["name"],
+            "place_type": area["place_type"],
+            "population": None,
+            "longitude": area["longitude"],
+            "latitude": area["latitude"],
+            "district_hint": area["district"],
+            "source": "local-curated-area",
+        }
+        for area in CURATED_LOCATION_AREAS
+    )
+
+    for candidate in candidates:
+        name = str(candidate.get("name") or "").strip()
+        if len(name) < 2:
+            continue
+
+        lon = float(candidate["longitude"])
+        lat = float(candidate["latitude"])
+        district_hint = str(candidate.get("district_hint") or "").lower()
+
+        matched_district = None
+        for feature in district_features:
+            props = feature.get("properties") or {}
+            district_name = props.get("DISTRICT") or props.get("shapeName") or props.get("name")
+            if district_hint and str(district_name).lower() != district_hint:
+                continue
+            if bbox_contains(feature["_bbox"], lon, lat) and point_in_geometry(lon, lat, feature["geometry"]):
+                matched_district = str(district_name)
+                break
+
+        if not matched_district:
+            continue
+
+        key = (matched_district.lower(), name.lower(), round(lat, 5), round(lon, 5))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            **candidate,
+            "name": name,
+            "district": matched_district,
+        })
+
+    return sorted(rows, key=lambda row: (row["district"], row["name"]))
+
+
+def local_location_area_districts() -> list[dict]:
+    counts = Counter(row["district"] for row in local_location_area_catalog())
+    return [
+        {
+            "district": district["district"],
+            "enumeration_area_count": counts.get(district["district"], 0),
+        }
+        for district in build_district_summaries()
+        if district.get("district") and district["district"] != "Unknown"
+    ]
+
+
+def location_grid_payload(name: str, district: str, lon: float, lat: float, source: str, place_type: str = "place") -> dict | None:
+    district_lower = district.lower()
+    results = normalize_results(load_results())
+    district_results = [
+        row for row in results
+        if (row.get("district_name") or row.get("district") or "").lower() == district_lower
+    ] or results
+    diagnostic = nearest_grid(lon, lat, district_results)
+    if not diagnostic:
+        return None
+
+    return {
+        "id": f"{source}:{district}:{name}:{round(lat, 6)}:{round(lon, 6)}",
+        "ea_name": name,
+        "display_name": name,
+        "ta_name": name,
+        "district_name": district,
+        "area_latitude": lat,
+        "area_longitude": lon,
+        "place_type": place_type,
+        "source": source,
+        "grid_id": str(diagnostic.get("grid_id")),
+        "overlap_fraction": None,
+        "contains_centroid": None,
+        "intersecting_grid_count": 1,
+        "grid": diagnostic,
+    }
+
+
+def local_area_search(district: str, q: str, limit: int) -> list[dict]:
+    query = q.lower()
+    rows: list[dict] = []
+    seen = set()
+
+    local_candidates = [
+        area for area in local_location_area_catalog()
+        if area["district"].lower() == district.lower()
+        and (
+            query in area["name"].lower()
+            or query in str(area.get("place_type") or "").lower()
+        )
+    ]
+
+    for place in sorted(local_candidates, key=lambda row: (0 if row["name"].lower().startswith(query) else 1, row["name"])):
+        lon = float(place["longitude"])
+        lat = float(place["latitude"])
+        name = str(place["name"]).strip()
+        if not name or name.lower() in seen:
+            continue
+        payload = location_grid_payload(name, district, lon, lat, place["source"], place.get("place_type") or "place")
+        if payload:
+            payload["population"] = place.get("population")
+            rows.append(payload)
+            seen.add(name.lower())
+        if len(rows) >= limit:
+            break
+
+    return rows
+
+
+def google_places_area_search(district: str, q: str, limit: int) -> list[dict]:
+    if not GOOGLE_MAPS_API_KEY:
+        return []
+
+    district_feature = district_feature_for_name(district)
+    body: dict = {
+        "textQuery": f"{q}, {district} District, Malawi",
+        "regionCode": "MW",
+        "maxResultCount": min(max(limit, 1), 10),
+    }
+    if district_feature:
+        min_lon, min_lat, max_lon, max_lat = district_feature["_bbox"]
+        body["locationBias"] = {
+            "rectangle": {
+                "low": {"latitude": min_lat, "longitude": min_lon},
+                "high": {"latitude": max_lat, "longitude": max_lon},
+            }
+        }
+
+    request = Request(
+        "https://places.googleapis.com/v1/places:searchText",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+            "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.types",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=6) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, URLError, json.JSONDecodeError):
+        return []
+
+    rows = []
+    seen = set()
+    for place in payload.get("places", []):
+        location = place.get("location") or {}
+        lat = location.get("latitude")
+        lon = location.get("longitude")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            continue
+        if district_feature and not (
+            bbox_contains(district_feature["_bbox"], float(lon), float(lat))
+            and point_in_geometry(float(lon), float(lat), district_feature["geometry"])
+        ):
+            continue
+        name = ((place.get("displayName") or {}).get("text") or place.get("formattedAddress") or q).strip()
+        if not name or name.lower() in seen:
+            continue
+        payload_row = location_grid_payload(name, district, float(lon), float(lat), "google-places", "Google Places")
+        if payload_row:
+            payload_row["formatted_address"] = place.get("formattedAddress")
+            payload_row["google_types"] = place.get("types") or []
+            rows.append(payload_row)
+            seen.add(name.lower())
+        if len(rows) >= limit:
+            break
+
+    return rows
+
+
 class PipelineRunRequest(BaseModel):
     region: str = "malawi"
+
+
+class AlgorithmConfigRequest(BaseModel):
+    season_start_month: int = 11
+    season_end_month: int = 4
+    enabled_season_years: list[int] = []
+    onset_trigger_mm: float = 25.0
+    onset_trigger_window_days: int = 3
+    persistence_window_days: int = 20
+    persistence_dry_spell_days: int = 10
+    dry_day_threshold_mm: float = 1.0
+    dry_spell_threshold_days: list[int] = [5, 7, 9]
+
+
+class AdminSessionRequest(BaseModel):
+    access_code: str
+
+
+def base64url_encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def base64url_decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def sign_admin_payload(payload: str) -> str:
+    return hmac.new(ADMIN_SESSION_SECRET.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def create_admin_token() -> str:
+    payload = {
+        "scope": "admin",
+        "exp": int(datetime.now(timezone.utc).timestamp()) + ADMIN_SESSION_TTL_SECONDS,
+        "nonce": str(uuid.uuid4()),
+    }
+    encoded_payload = base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    return f"{encoded_payload}.{sign_admin_payload(encoded_payload)}"
+
+
+def verify_admin_token(token: str | None) -> bool:
+    if not token or "." not in token:
+        return False
+    encoded_payload, signature = token.rsplit(".", 1)
+    if not hmac.compare_digest(signature, sign_admin_payload(encoded_payload)):
+        return False
+    try:
+        payload = json.loads(base64url_decode(encoded_payload))
+    except Exception:
+        return False
+    return payload.get("scope") == "admin" and int(payload.get("exp") or 0) > int(datetime.now(timezone.utc).timestamp())
+
+
+def require_admin_session(request: FastAPIRequest):
+    token = request.headers.get("x-admin-token", "")
+    authorization = request.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not verify_admin_token(token):
+        raise HTTPException(status_code=401, detail="Admin access required.")
+    return True
+
+
+def infer_season_year_from_filename(filename: str) -> int | None:
+    match = re.search(r"(?:19|20)\d{2}", filename)
+    if not match:
+        return None
+    return int(match.group(0))
+
+
+def extract_raw_dataset_years() -> list[int]:
+    if not RAW_CHIRPS_DIR.exists():
+        return []
+
+    years = set()
+    for dataset_path in RAW_CHIRPS_DIR.iterdir():
+        if not dataset_path.is_file():
+            continue
+        if dataset_path.suffix.lower() not in ALLOWED_RAINFALL_DATASET_EXTENSIONS:
+            continue
+        year = infer_season_year_from_filename(dataset_path.name)
+        if year:
+            years.add(year)
+    return sorted(years)
+
+
+def available_dataset_years(results: list[dict] | None = None) -> list[int]:
+    raw_years = extract_raw_dataset_years()
+    if raw_years:
+        return raw_years
+    if results is None:
+        try:
+            results = load_results()
+        except Exception:
+            results = []
+    return extract_available_years(results)
+
+
+def active_configured_years(config: dict, available_years: list[int]) -> list[int]:
+    enabled_years = sorted({
+        int(year)
+        for year in config.get("enabled_season_years", [])
+        if str(year).isdigit()
+    })
+    if not enabled_years:
+        return available_years
+
+    available = set(available_years)
+    if not available:
+        return enabled_years
+    return [year for year in enabled_years if year in available]
 
 
 app = FastAPI(
@@ -288,6 +909,110 @@ def root():
 @app.get("/api/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.post("/api/admin/session")
+def create_admin_session(payload: AdminSessionRequest):
+    if not hmac.compare_digest(payload.access_code.strip(), ADMIN_ACCESS_CODE):
+        raise HTTPException(status_code=401, detail="Invalid admin access code.")
+    return {
+        "status": "authenticated",
+        "token": create_admin_token(),
+        "expires_in_seconds": ADMIN_SESSION_TTL_SECONDS,
+    }
+
+
+@app.get("/api/admin/session")
+def get_admin_session(_: bool = Depends(require_admin_session)):
+    return {"status": "authenticated"}
+
+
+@app.get("/api/admin/algorithm-config")
+def get_algorithm_config(_: bool = Depends(require_admin_session)):
+    config = load_algorithm_config()
+    available_years = available_dataset_years()
+    return {
+        "config": config,
+        "defaults": DEFAULT_ALGORITHM_CONFIG,
+        "available_years": available_years,
+        "active_years": active_configured_years(config, available_years),
+    }
+
+
+@app.put("/api/admin/algorithm-config")
+def update_algorithm_config(payload: AlgorithmConfigRequest, _: bool = Depends(require_admin_session)):
+    saved = save_algorithm_config(payload.dict())
+    _load_results_cached.cache_clear()
+    load_raw_chirps_dataset.cache_clear()
+    return {
+        "status": "saved",
+        "config": saved,
+        "message": "Configuration saved. Rerun the rainfall pipeline for outputs to use the new settings.",
+    }
+
+
+@app.post("/api/admin/algorithm-config/upload-season")
+async def upload_season_dataset(
+    request: FastAPIRequest,
+    filename: str = Query(..., min_length=1),
+    season_year: int | None = Query(default=None),
+    _: bool = Depends(require_admin_session),
+):
+    safe_filename = Path(filename).name
+    if not safe_filename or safe_filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Provide a valid dataset filename.")
+
+    extension = Path(safe_filename).suffix.lower()
+    if extension not in ALLOWED_RAINFALL_DATASET_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_RAINFALL_DATASET_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Unsupported rainfall dataset type. Use one of: {allowed}.")
+
+    RAW_CHIRPS_DIR.mkdir(parents=True, exist_ok=True)
+    target_path = RAW_CHIRPS_DIR / safe_filename
+    size_bytes = 0
+
+    try:
+        with target_path.open("wb") as output:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size_bytes += len(chunk)
+                output.write(chunk)
+    except Exception as exc:
+        if target_path.exists() and size_bytes == 0:
+            target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Could not save rainfall dataset: {exc}") from exc
+
+    if size_bytes == 0:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded rainfall dataset was empty.")
+
+    resolved_year = season_year or infer_season_year_from_filename(safe_filename)
+    config = load_algorithm_config()
+    if resolved_year:
+        active_years = set(config.get("enabled_season_years") or [])
+        if not active_years:
+            active_years.update(available_dataset_years())
+        active_years.add(int(resolved_year))
+        config["enabled_season_years"] = sorted(active_years)
+        config = save_algorithm_config(config)
+
+    _load_results_cached.cache_clear()
+    load_raw_chirps_dataset.cache_clear()
+
+    return {
+        "status": "uploaded",
+        "filename": safe_filename,
+        "saved_to": str(target_path),
+        "size_bytes": size_bytes,
+        "season_year": resolved_year,
+        "config": config,
+        "message": (
+            f"{safe_filename} was saved to backend/algorithms/data/raw"
+            + (f" and registered as the {resolved_year}-{str(resolved_year + 1)[-2:]} season." if resolved_year else ".")
+            + " Rerun the rainfall pipeline to generate updated outputs."
+        ),
+    }
 
 
 @app.get("/api/results")
@@ -411,7 +1136,7 @@ def get_grid_history(grid_id: str):
 
 @app.get("/api/seasons/years")
 def get_available_season_years():
-    years = extract_available_years(load_results())
+    years = available_dataset_years()
     ranges = []
     if years:
         ranges.append({"label": "All Seasons", "value": "all", "start_year": years[0], "end_year": years[-1]})
@@ -429,21 +1154,24 @@ def get_available_season_years():
 @app.get("/api/dashboard/overview")
 def get_dashboard_overview():
     results = normalize_results(load_results())
+    config = load_algorithm_config()
+    dataset_years = available_dataset_years(results)
+    active_years = active_configured_years(config, dataset_years)
+
     if not results:
         return {
             "grid_count": 0,
-            "season_count": 0,
-            "available_years": [],
+            "season_count": len(active_years),
+            "available_years": active_years,
             "average_onset_probability": 0,
             "average_false_onset_probability": 0,
             "average_dry_spell_probability": 0,
         }
 
-    years = extract_available_years(results)
     return {
         "grid_count": len(results),
-        "season_count": len(years),
-        "available_years": years,
+        "season_count": len(active_years),
+        "available_years": active_years,
         "average_onset_probability": round(sum(probability_for_onset(result) for result in results) / len(results), 3),
         "average_false_onset_probability": round(sum(float(result.get("false_onset_probability") or 0) for result in results) / len(results), 3),
         "average_dry_spell_probability": round(sum(dry_spell_probability(result) for result in results) / len(results), 3),
@@ -468,6 +1196,12 @@ def search_grid_locations(q: str = Query(..., min_length=2), limit: int = Query(
             "onset_probability": probability_for_onset(row),
             "false_onset_probability": float(row.get("false_onset_probability") or 0),
             "dry_spell_probability": dry_spell_probability(row),
+            "dry_spell_probability_5day": dry_spell_probability_for_threshold(row, 5),
+            "dry_spell_probability_7day": dry_spell_probability_for_threshold(row, 7),
+            "dry_spell_probability_9day": dry_spell_probability_for_threshold(row, 9),
+            "early_establishment_stress_probability": float(row.get("early_establishment_stress_probability", dry_spell_probability(row)) or 0),
+            "onset_spread_days": row.get("onset_spread_days"),
+            "onset_variability_std": row.get("onset_variability_std"),
             "seasons_analyzed": row.get("seasons_analyzed") or 0,
             "seasons_with_detected_onset": row.get("seasons_with_detected_onset") or 0,
             "first_detected_onset_date": row.get("first_detected_onset_date"),
@@ -541,6 +1275,21 @@ def get_onset_timeline(
         "start_year": start_year,
         "end_year": end_year,
         **timeline,
+    }
+
+
+@app.get("/api/onset/trigger-events")
+def get_onset_trigger_events(
+    grid_id: str = Query(...),
+    start_year: int | None = Query(default=None),
+    end_year: int | None = Query(default=None),
+):
+    payload = onset_candidate_events_for_grid(grid_id, start_year, end_year)
+    return {
+        "grid_id": grid_id,
+        "start_year": start_year,
+        "end_year": end_year,
+        **payload,
     }
 
 
@@ -678,22 +1427,27 @@ def get_enumeration_area_hierarchy():
 
 @app.get("/api/locations/districts")
 def get_location_districts():
-    """Return districts for the EA selector. Falls back to local grid coverage."""
-    try:
-        from backend.database.connection import fetch_all
-
-        rows = fetch_all(
-            """
-            select district_name as district, count(*) as enumeration_area_count
-            from enumeration_areas
-            group by district_name
-            order by district_name
-            """
-        )
+    """Return all districts for the location-area selector."""
+    if USE_LOCAL_LOCATION_API:
+        rows = local_location_area_districts()
         if rows:
-            return {"available": True, "district_count": len(rows), "districts": rows}
-    except Exception:
-        pass
+            return {"available": True, "district_count": len(rows), "districts": rows, "source": "local-location-catalog"}
+    else:
+        try:
+            from backend.database.connection import fetch_all
+
+            rows = fetch_all(
+                """
+                select district_name as district, count(*) as enumeration_area_count
+                from enumeration_areas
+                group by district_name
+                order by district_name
+                """
+            )
+            if rows:
+                return {"available": True, "district_count": len(rows), "districts": rows}
+        except Exception:
+            pass
 
     districts = [
         {"district": row["district"], "enumeration_area_count": 0}
@@ -711,61 +1465,106 @@ def get_location_districts():
 @app.get("/api/locations/enumeration-areas")
 def get_enumeration_areas_by_district(district: str = Query(...)):
     """Return enumeration areas for a district, including their primary mapped grid."""
-    try:
-        from backend.database.connection import fetch_all
-
-        rows = fetch_all(
-            """
-            select
-                ea.id,
-                ea.ea_name,
-                ea.ta_name,
-                ea.district_name,
-                primary_grid.grid_id,
-                primary_grid.overlap_fraction,
-                primary_grid.contains_centroid,
-                count(eagi.grid_id) as intersecting_grid_count
-            from enumeration_areas ea
-            left join lateral (
-                select grid_id, overlap_fraction, contains_centroid
-                from enumeration_area_grid_intersections eagi2
-                where eagi2.enumeration_area_id = ea.id
-                order by contains_centroid desc, overlap_fraction desc
-                limit 1
-            ) primary_grid on true
-            left join enumeration_area_grid_intersections eagi
-                on eagi.enumeration_area_id = ea.id
-            where lower(ea.district_name) = lower(%(district)s)
-            group by ea.id, ea.ea_name, ea.ta_name, ea.district_name,
-                     primary_grid.grid_id, primary_grid.overlap_fraction, primary_grid.contains_centroid
-            order by ea.ea_name
-            """,
-            {"district": district},
-        )
-    except Exception:
+    if USE_LOCAL_LOCATION_API:
+        areas = local_enumeration_areas_for_district(district)
         return {
-            "available": False,
+            "available": bool(areas),
             "district": district,
-            "enumeration_area_count": 0,
-            "enumeration_areas": [],
-            "detail": "Enumeration-area geometry has not been loaded.",
+            "enumeration_area_count": len(areas),
+            "enumeration_areas": areas,
+            "source": "local-shapefile",
+        }
+    else:
+        try:
+            from backend.database.connection import fetch_all
+
+            rows = fetch_all(
+                """
+                select
+                    ea.id,
+                    ea.ea_name,
+                    ea.ta_name,
+                    ea.district_name,
+                    ST_Y(ST_PointOnSurface(ea.geom)) as area_latitude,
+                    ST_X(ST_PointOnSurface(ea.geom)) as area_longitude,
+                    primary_grid.grid_id,
+                    primary_grid.overlap_fraction,
+                    primary_grid.contains_centroid,
+                    count(eagi.grid_id) as intersecting_grid_count
+                from enumeration_areas ea
+                left join lateral (
+                    select grid_id, overlap_fraction, contains_centroid
+                    from enumeration_area_grid_intersections eagi2
+                    where eagi2.enumeration_area_id = ea.id
+                    order by contains_centroid desc, overlap_fraction desc
+                    limit 1
+                ) primary_grid on true
+                left join enumeration_area_grid_intersections eagi
+                    on eagi.enumeration_area_id = ea.id
+                where lower(ea.district_name) = lower(%(district)s)
+                group by ea.id, ea.ea_name, ea.ta_name, ea.district_name,
+                         ea.geom,
+                         primary_grid.grid_id, primary_grid.overlap_fraction, primary_grid.contains_centroid
+                order by ea.ea_name
+                """,
+                {"district": district},
+            )
+        except Exception:
+            return {
+                "available": False,
+                "district": district,
+                "enumeration_area_count": 0,
+                "enumeration_areas": [],
+                "detail": "Enumeration-area geometry has not been loaded.",
+            }
+
+        results = normalize_results(load_results())
+        by_grid = {str(row.get("grid_id")): row for row in results}
+        areas = []
+        for row in rows:
+            diagnostic = by_grid.get(str(row.get("grid_id"))) if row.get("grid_id") else None
+            areas.append({
+                **row,
+                "grid": diagnostic,
+            })
+
+        return {
+            "available": True,
+            "district": district,
+            "enumeration_area_count": len(areas),
+            "enumeration_areas": areas,
         }
 
-    results = normalize_results(load_results())
-    by_grid = {str(row.get("grid_id")): row for row in results}
-    areas = []
-    for row in rows:
-        diagnostic = by_grid.get(str(row.get("grid_id"))) if row.get("grid_id") else None
-        areas.append({
-            **row,
-            "grid": diagnostic,
-        })
+
+@app.get("/api/locations/area-search")
+def search_areas_in_district(
+    district: str = Query(...),
+    q: str = Query(..., min_length=2),
+    limit: int = Query(default=10, ge=1, le=20),
+):
+    """Search named areas in a selected district, using Google Places when configured and local data as fallback."""
+    google_rows = google_places_area_search(district, q, limit)
+    local_rows = local_area_search(district, q, limit)
+
+    rows = []
+    seen = set()
+    for row in [*google_rows, *local_rows]:
+        key = (str(row.get("display_name") or row.get("ea_name") or "").lower(), row.get("grid_id"))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(row)
+        if len(rows) >= limit:
+            break
 
     return {
-        "available": True,
+        "available": bool(rows),
         "district": district,
-        "enumeration_area_count": len(areas),
-        "enumeration_areas": areas,
+        "query": q,
+        "google_enabled": bool(GOOGLE_MAPS_API_KEY),
+        "source": "google-places+local" if google_rows else "local",
+        "enumeration_area_count": len(rows),
+        "enumeration_areas": rows,
     }
 
 
@@ -835,6 +1634,12 @@ def search_locations(name: str = Query(...), limit: int = Query(default=10)):
             "onset_probability": probability_for_onset(grid),
             "false_onset_probability": float(grid.get("false_onset_probability") or 0),
             "dry_spell_probability": dry_spell_probability(grid),
+            "dry_spell_probability_5day": dry_spell_probability_for_threshold(grid, 5),
+            "dry_spell_probability_7day": dry_spell_probability_for_threshold(grid, 7),
+            "dry_spell_probability_9day": dry_spell_probability_for_threshold(grid, 9),
+            "early_establishment_stress_probability": float(grid.get("early_establishment_stress_probability", dry_spell_probability(grid)) or 0),
+            "onset_spread_days": grid.get("onset_spread_days"),
+            "onset_variability_std": grid.get("onset_variability_std"),
             "seasons_analyzed": grid.get("seasons_analyzed") or 0,
             "seasons_with_detected_onset": grid.get("seasons_with_detected_onset") or 0,
             "first_detected_onset_date": grid.get("first_detected_onset_date"),
@@ -1092,6 +1897,10 @@ def normalize_results(results: list[dict]) -> list[dict]:
         row = dict(result)
         if "dry_spell_probability" not in row:
             row["dry_spell_probability"] = row.get(LEGACY_DRY_PROBABILITY_KEY, 0.0)
+        row.setdefault("dry_spell_probability_5day", row.get("dry_spell_probability", 0.0))
+        row.setdefault("dry_spell_probability_7day", 0.0)
+        row.setdefault("dry_spell_probability_9day", 0.0)
+        row.setdefault("early_establishment_stress_probability", row.get("dry_spell_probability", 0.0))
         if "dry_spell_interpretation" not in row:
             row["dry_spell_interpretation"] = row.get(LEGACY_DRY_INTERPRETATION_KEY)
         row.pop(LEGACY_DRY_PROBABILITY_KEY, None)

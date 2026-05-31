@@ -38,7 +38,12 @@ export default function FalseOnsetRiskPage() {
     <div className="space-y-6 bg-[#eef2f4] px-0 pb-6 md:px-0">
       <div className="rounded-[20px] bg-white p-6 md:p-8 shadow-sm border border-[#e9edf1]">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h1 className="text-4xl font-bold text-[#0F2A3D]">False-Onset Risk</h1>
+          <div className="space-y-1">
+            <h1 className="text-4xl font-bold text-[#0F2A3D]">False-Onset Risk</h1>
+            <p className="max-w-3xl text-[14px] leading-6 text-[#6b7a8d]">
+              Highlights grid cells where early rainfall may appear sufficient for planting but is followed by dry conditions that can expose crops to establishment failure.
+            </p>
+          </div>
           {liveStatus === "live" && (
             <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] border border-[#bbf7d0] px-3 py-1.5 rounded-full w-fit">
               <Wifi className="h-3 w-3" /> Live Data
@@ -67,12 +72,7 @@ export default function FalseOnsetRiskPage() {
         <div className="flex flex-col gap-5">
           <GridDiagnosticWidget
             metricLabel="False Onset Probability"
-            metricValue={
-              selectedLocation?.gridData?.false_onset_probability ??
-              selectedLocation?.taData?.average_false_onset_probability ??
-              liveSelectedDistrict?.average_false_onset_probability ??
-              null
-            }
+            metricValue={selectedLocation?.gridData?.false_onset_probability ?? null}
             selectedLocation={selectedLocation}
             defaultDistrict={defaultDistrict}
             liveStatus={liveStatus}

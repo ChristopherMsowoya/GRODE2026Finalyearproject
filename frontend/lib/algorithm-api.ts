@@ -8,6 +8,12 @@ export interface AlgorithmResult {
   latest_detected_onset_date: string | null
   false_onset_probability: number
   dry_spell_probability: number
+  dry_spell_probability_5day?: number | null
+  dry_spell_probability_7day?: number | null
+  dry_spell_probability_9day?: number | null
+  early_establishment_stress_probability?: number | null
+  onset_spread_days?: number | null
+  onset_variability_std?: number | null
   overall_risk_level: "Low" | "Medium" | "High"
   false_onset_interpretation: string
   dry_spell_interpretation: string
@@ -102,6 +108,12 @@ export interface LocationSearchResult {
   onset_probability?: number | null
   false_onset_probability?: number | null
   dry_spell_probability?: number | null
+  dry_spell_probability_5day?: number | null
+  dry_spell_probability_7day?: number | null
+  dry_spell_probability_9day?: number | null
+  early_establishment_stress_probability?: number | null
+  onset_spread_days?: number | null
+  onset_variability_std?: number | null
   seasons_analyzed?: number | null
   seasons_with_detected_onset?: number | null
   first_detected_onset_date?: string | null
@@ -129,8 +141,27 @@ export interface OnsetTimelineResponse {
   p10_onset_date: string | null
   median_onset_date: string | null
   p90_onset_date: string | null
+  onset_spread_days?: number | null
+  onset_variability_std?: number | null
   trigger_count: number
   series: OnsetTimelinePoint[]
+}
+
+export interface OnsetTriggerEvent {
+  season: string
+  season_year: number
+  flag_date: string
+  day_offset: number
+  rainfall_3day_total: number
+  accepted_onset: boolean
+}
+
+export interface OnsetTriggerEventsResponse {
+  grid_id: string
+  start_year: number | null
+  end_year: number | null
+  season_count: number
+  events: OnsetTriggerEvent[]
 }
 
 export interface LocationHierarchyResponse {
@@ -161,8 +192,14 @@ export interface LocationDistrictsResponse {
 export interface EnumerationAreaOption {
   id: string
   ea_name: string
+  display_name?: string | null
   ta_name: string | null
   district_name: string
+  area_latitude?: number | null
+  area_longitude?: number | null
+  source?: string | null
+  place_type?: string | null
+  formatted_address?: string | null
   grid_id: string | null
   overlap_fraction: number | null
   contains_centroid: boolean | null
@@ -198,6 +235,41 @@ export interface SeasonYearsResponse {
   ranges: SeasonRangeOption[]
 }
 
+export interface AlgorithmConfig {
+  season_start_month: number
+  season_end_month: number
+  enabled_season_years: number[]
+  onset_trigger_mm: number
+  onset_trigger_window_days: number
+  persistence_window_days: number
+  persistence_dry_spell_days: number
+  dry_day_threshold_mm: number
+  dry_spell_threshold_days: number[]
+}
+
+export interface AlgorithmConfigResponse {
+  config: AlgorithmConfig
+  defaults: AlgorithmConfig
+  available_years: number[]
+  active_years: number[]
+}
+
+export interface SeasonDatasetUploadResponse {
+  status: string
+  filename: string
+  saved_to: string
+  size_bytes: number
+  season_year: number | null
+  config: AlgorithmConfig
+  message: string
+}
+
+export interface AdminSessionResponse {
+  status: string
+  token: string
+  expires_in_seconds: number
+}
+
 export interface GeoJsonFeature {
   type: string
   properties: Record<string, string | number | boolean | null>
@@ -224,6 +296,12 @@ export interface GridDiagnosticProperties {
   onset_probability?: number | null
   false_onset_probability?: number | null
   dry_spell_probability?: number | null
+  dry_spell_probability_5day?: number | null
+  dry_spell_probability_7day?: number | null
+  dry_spell_probability_9day?: number | null
+  early_establishment_stress_probability?: number | null
+  onset_spread_days?: number | null
+  onset_variability_std?: number | null
   area_name?: string | null
   area_place_type?: string | null
   area_latitude?: number | null
@@ -329,6 +407,23 @@ const EMPTY_ENUMERATION_AREAS = (district: string): EnumerationAreasResponse => 
   enumeration_areas: [],
 })
 const EMPTY_SEASON_YEARS: SeasonYearsResponse = { year_count: 0, available_years: [], ranges: [] }
+const DEFAULT_ALGORITHM_CONFIG: AlgorithmConfig = {
+  season_start_month: 11,
+  season_end_month: 4,
+  enabled_season_years: [],
+  onset_trigger_mm: 25,
+  onset_trigger_window_days: 3,
+  persistence_window_days: 20,
+  persistence_dry_spell_days: 10,
+  dry_day_threshold_mm: 1,
+  dry_spell_threshold_days: [5, 7, 9],
+}
+const EMPTY_ALGORITHM_CONFIG_RESPONSE: AlgorithmConfigResponse = {
+  config: DEFAULT_ALGORITHM_CONFIG,
+  defaults: DEFAULT_ALGORITHM_CONFIG,
+  available_years: [],
+  active_years: [],
+}
 const EMPTY_DASHBOARD_OVERVIEW: DashboardOverview = {
   grid_count: 0,
   season_count: 0,
@@ -555,6 +650,15 @@ export function fetchEnumerationAreas(district: string, signal?: AbortSignal) {
   })
 }
 
+export function searchAreasInDistrict(district: string, q: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ district, q, limit: "10" })
+  return apiFetch<EnumerationAreasResponse>(`/api/locations/area-search?${params.toString()}`, {
+    fallback: EMPTY_ENUMERATION_AREAS(district),
+    signal,
+    timeoutMs: 9000,
+  })
+}
+
 export function fetchTaGrids(district: string, ta: string, signal?: AbortSignal) {
   const params = new URLSearchParams({
     district,
@@ -586,6 +690,65 @@ export function triggerPipelineRun(region = "malawi") {
 }
 
 // Grid helpers — new DB-backed endpoints
+export function createAdminSession(accessCode: string) {
+  return apiFetch<AdminSessionResponse>("/api/admin/session", {
+    method: "POST",
+    body: JSON.stringify({ access_code: accessCode }),
+  })
+}
+
+export function verifyAdminSession(token: string) {
+  return apiFetch<{ status: string }>("/api/admin/session", {
+    headers: { "x-admin-token": token },
+  })
+}
+
+export function fetchAlgorithmConfig(adminToken?: string | null) {
+  return apiFetch<AlgorithmConfigResponse>("/api/admin/algorithm-config", {
+    headers: adminToken ? { "x-admin-token": adminToken } : undefined,
+  })
+}
+
+export function updateAlgorithmConfig(config: AlgorithmConfig, adminToken?: string | null) {
+  return apiFetch<{ status: string; config: AlgorithmConfig; message: string }>("/api/admin/algorithm-config", {
+    method: "PUT",
+    headers: adminToken ? { "x-admin-token": adminToken } : undefined,
+    body: JSON.stringify(config),
+  })
+}
+
+export async function uploadSeasonDataset(file: File, seasonYear?: number | null, adminToken?: string | null) {
+  const params = new URLSearchParams({ filename: file.name })
+  if (seasonYear) params.set("season_year", String(seasonYear))
+
+  const response = await fetch(`${API_BASE_URL}/api/admin/algorithm-config/upload-season?${params.toString()}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type || "application/octet-stream",
+      ...(adminToken ? { "x-admin-token": adminToken } : {}),
+    },
+    body: file,
+    cache: "no-store",
+  })
+
+  if (!response.ok) {
+    let detail = "Could not upload rainfall dataset."
+    try {
+      const body = await response.json()
+      detail = body.detail || detail
+    } catch {
+      // Keep the generic message if the backend returns non-JSON.
+    }
+    throw new ApiRequestError(detail, {
+      status: response.status,
+      retryable: response.status >= 500 || response.status === 408 || response.status === 429,
+    })
+  }
+
+  invalidateAlgorithmCaches()
+  return response.json() as Promise<SeasonDatasetUploadResponse>
+}
+
 export function fetchGridCells(params?: { limit?: number; offset?: number; source_grid?: string }) {
   const qs = new URLSearchParams()
 
@@ -597,12 +760,13 @@ export function fetchGridCells(params?: { limit?: number; offset?: number; sourc
   return apiFetch<any>(path, { fallback: EMPTY_FEATURE_COLLECTION }).then(normalizeGeoJsonCollection)
 }
 
-export function fetchGridDiagnostics(params?: { limit?: number; offset?: number; source_grid?: string }) {
+export function fetchGridDiagnostics(params?: { limit?: number; offset?: number; source_grid?: string; district?: string }) {
   const qs = new URLSearchParams()
 
   if (params?.limit) qs.set('limit', String(params.limit))
   if (params?.offset) qs.set('offset', String(params.offset))
   if (params?.source_grid) qs.set('source_grid', params.source_grid)
+  if (params?.district) qs.set('district', params.district)
 
   const path = `/api/grid/diagnostic-cells${qs.toString() ? `?${qs.toString()}` : ''}`
   return cachePromise(
@@ -676,6 +840,23 @@ export function fetchOnsetTimeline(gridId: string, startYear?: number | null, en
       trigger_count: 0,
       series: [],
     },
+  })
+}
+
+export function fetchOnsetTriggerEvents(gridId: string, startYear?: number | null, endYear?: number | null) {
+  const qs = new URLSearchParams({ grid_id: gridId })
+  if (startYear) qs.set("start_year", String(startYear))
+  if (endYear) qs.set("end_year", String(endYear))
+
+  return apiFetch<OnsetTriggerEventsResponse>(`/api/onset/trigger-events?${qs.toString()}`, {
+    fallback: {
+      grid_id: gridId,
+      start_year: startYear ?? null,
+      end_year: endYear ?? null,
+      season_count: 0,
+      events: [],
+    },
+    timeoutMs: 20000,
   })
 }
 

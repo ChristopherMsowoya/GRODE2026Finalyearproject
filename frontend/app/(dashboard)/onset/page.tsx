@@ -61,6 +61,9 @@ export default function OnsetInfoPage() {
             )}
           </div>
           <p className="text-[14px] text-[#6b7a8d] mt-1">
+            Shows where and when reliable rainfall onset is detected for each grid cell during Malawi's rainy season.
+          </p>
+          <p className="text-[14px] text-[#6b7a8d] mt-1">
             for {selectedLocation?.areaName || selectedLocation?.ta || activeDistrict}
           </p>
         </div>
@@ -86,10 +89,7 @@ export default function OnsetInfoPage() {
         <div className="flex flex-col gap-5">
           <GridDiagnosticWidget
             metricLabel="Onset Probability"
-            metricValue={
-              selectedLocation?.gridData?.onset_probability ??
-              (liveSelectedDistrict?.onset_detection_rate ?? null)
-            }
+            metricValue={selectedLocation?.gridData?.onset_probability ?? null}
             selectedLocation={selectedLocation}
             defaultDistrict={defaultDistrict}
             liveStatus={liveStatus}

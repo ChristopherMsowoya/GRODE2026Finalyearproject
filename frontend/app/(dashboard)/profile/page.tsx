@@ -9,7 +9,6 @@ import {
 } from "lucide-react"
 import { useUser, getInitials, requestBrowserNotifications } from "@/lib/user-context"
 import type { UserProfile } from "@/lib/user-context"
-import Link from "next/link"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DISTRICTS = [
@@ -122,11 +121,6 @@ export default function ProfilePage() {
       <div className="flex flex-col items-center justify-center py-32 gap-4">
         <AlertTriangle className="h-12 w-12" style={{ color: "#F4A261" }} />
         <p className="text-[16px] font-semibold" style={{ color: "#1a2332" }}>No account found</p>
-        <Link href="/create-account"
-          className="rounded-xl px-6 py-3 text-[13.5px] font-bold text-white"
-          style={{ background: "linear-gradient(135deg,#0F2A3D,#1F7A63)" }}>
-          Create Account
-        </Link>
       </div>
     )
   }
@@ -189,7 +183,7 @@ export default function ProfilePage() {
 
   const handleLogout = () => {
     logout()
-    router.push("/create-account")
+    router.push("/")
   }
 
   const DISTRICT_LABELS: Record<string, string> = Object.fromEntries(
