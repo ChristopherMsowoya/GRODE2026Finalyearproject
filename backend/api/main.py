@@ -1022,7 +1022,7 @@ async def upload_season_dataset(
         "message": (
             f"{safe_filename} was saved to backend/algorithms/data/raw"
             + (f" and registered as the {resolved_year}-{str(resolved_year + 1)[-2:]} season." if resolved_year else ".")
-            + " Rerun the rainfall pipeline to generate updated outputs."
+            + " The home dashboard season count will update from loaded datasets. Rerun the rainfall pipeline to generate updated maps and graph outputs."
         ),
     }
 
@@ -1165,8 +1165,12 @@ def get_available_season_years():
 
 @app.get("/api/dashboard/overview")
 def get_dashboard_overview():
-    results = normalize_results(load_results())
     config = load_algorithm_config()
+    try:
+        results = normalize_results(load_results())
+    except HTTPException:
+        results = []
+
     dataset_years = available_dataset_years(results)
     active_years = active_configured_years(config, dataset_years)
 
