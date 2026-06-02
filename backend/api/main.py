@@ -76,6 +76,23 @@ ALLOWED_RAINFALL_DATASET_EXTENSIONS = {".nc", ".nc4", ".cdf"}
 ADMIN_ACCESS_CODE = os.environ.get("GRODE_ADMIN_ACCESS_CODE") or os.environ.get("ADMIN_ACCESS_CODE") or "grode-admin-2026"
 ADMIN_SESSION_SECRET = os.environ.get("GRODE_ADMIN_SESSION_SECRET") or os.environ.get("SUPABASE_KEY") or ADMIN_ACCESS_CODE
 ADMIN_SESSION_TTL_SECONDS = int(os.environ.get("GRODE_ADMIN_SESSION_TTL_SECONDS", "28800"))
+DEFAULT_FRONTEND_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:4000",
+    "http://127.0.0.1:4000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://grode-frontend.onrender.com",
+]
+FRONTEND_ORIGINS = sorted({
+    origin.strip().rstrip("/")
+    for origin in (
+        DEFAULT_FRONTEND_ORIGINS
+        + (os.environ.get("FRONTEND_ORIGINS") or os.environ.get("CORS_ORIGINS") or "").split(",")
+    )
+    if origin.strip()
+})
 
 if str(ALGORITHMS_SRC) not in sys.path:
     sys.path.append(str(ALGORITHMS_SRC))
@@ -870,12 +887,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173", "http://localhost:4000", "http://127.0.0.1:4000",
-    ],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

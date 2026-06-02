@@ -12,6 +12,8 @@ services:
         generateValue: true
       - key: GRID_API_SOURCE
         value: local
+      - key: FRONTEND_ORIGINS
+        value: https://grode-frontend.onrender.com
 
   - type: web
     name: grode-frontend
