@@ -48,10 +48,10 @@ export default function OnsetInfoPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-[36px] font-extrabold tracking-tight leading-tight text-[#0F2A3D]">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-[#0F2A3D] sm:text-[36px]">
               Rainfall Onset Detection
             </h1>
             {liveStatus === "live" && liveSelectedDistrict && (
@@ -69,13 +69,13 @@ export default function OnsetInfoPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl p-4 border border-[#e2e8f0] bg-white">
+      <div className="rounded-2xl border border-[#e2e8f0] bg-white p-3 sm:p-4">
         <LocationSelector onLocationChange={handleLocationChange} defaultDistrict={defaultDistrict} />
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1fr_400px]">
         <div className="flex flex-col gap-5">
-          <div className="rounded-[20px] bg-white p-0 shadow-sm border border-[#e9edf1] overflow-hidden" style={{ minHeight: "500px" }}>
+          <div className="min-h-[360px] overflow-hidden rounded-[20px] border border-[#e9edf1] bg-white p-0 shadow-sm sm:min-h-[500px]">
             <OnsetMap
               selectedLocation={selectedLocation}
               onLocationChange={handleLocationChange}

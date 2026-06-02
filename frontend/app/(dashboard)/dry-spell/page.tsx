@@ -44,11 +44,11 @@ export default function DrySpellPage() {
   return (
     <div className="space-y-6 bg-[#eef2f4] px-0 pb-6">
       {/* ── Page header ───────────────────────────────────────────── */}
-      <div className="rounded-[20px] bg-white p-6 md:p-8 shadow-sm border border-[#e9edf1]">
+      <div className="rounded-[20px] border border-[#e9edf1] bg-white p-4 shadow-sm sm:p-6 md:p-8">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <p className="text-[12px] uppercase tracking-[0.32em] text-[#6b7a8d]">Dry Spell Analysis</p>
-            <h1 className="text-4xl font-bold text-[#0d2f3f]">Dry Spell Risk</h1>
+            <h1 className="text-[28px] font-bold leading-tight text-[#0d2f3f] sm:text-4xl">Dry Spell Risk</h1>
             <p className="max-w-3xl text-[14px] leading-6 text-[#6b7a8d]">
               Displays grid-level probability of 5, 7, and 9-day dry spells after valid rainfall onset, helping identify areas where crops may face early establishment stress.
             </p>
@@ -60,7 +60,7 @@ export default function DrySpellPage() {
           )}
         </div>
 
-        <div className="mt-6 pt-6 border-t border-[#e2e8f0]">
+        <div className="mt-5 border-t border-[#e2e8f0] pt-5 sm:mt-6 sm:pt-6">
           <LocationSelector
             onLocationChange={handleLocationChange}
             defaultDistrict={defaultDistrict}
@@ -71,7 +71,7 @@ export default function DrySpellPage() {
       <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
         {/* Left Panel: Map + Graph */}
         <div className="flex flex-col gap-5">
-          <div className="rounded-[20px] bg-white p-0 shadow-sm border border-[#e9edf1] overflow-hidden" style={{ minHeight: "600px" }}>
+          <div className="min-h-[380px] overflow-hidden rounded-[20px] border border-[#e9edf1] bg-white p-0 shadow-sm sm:min-h-[600px]">
             <DynamicMapComponent
               selectedLocation={selectedLocation}
               onLocationChange={handleLocationChange}

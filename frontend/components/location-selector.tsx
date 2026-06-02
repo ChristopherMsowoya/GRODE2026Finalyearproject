@@ -244,17 +244,17 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
         </div>
       )}
 
-      <div className="relative z-[1400] flex flex-wrap items-center gap-3">
-        <div className="relative">
+      <div className="relative z-[1400] flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="relative w-full sm:w-auto">
           <button
             onClick={() => { setDistrictOpen((value) => !value); setAreaFocused(false) }}
-            className="flex items-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-4 py-2 text-[13px] font-semibold text-[#0F2A3D] shadow-sm"
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-[#e2e8f0] bg-white px-4 py-2.5 text-[13px] font-semibold text-[#0F2A3D] shadow-sm sm:w-auto sm:justify-start sm:py-2"
           >
             <span className="max-w-[170px] truncate">{selectedDistrict} District</span>
             <ChevronDown className={`h-3.5 w-3.5 text-[#6b7a8d] transition-transform ${districtOpen ? "rotate-180" : ""}`} />
           </button>
           {districtOpen && (
-            <div className="absolute left-0 top-full mt-1.5 max-h-72 w-64 overflow-y-auto rounded-lg border border-[#e2e8f0] bg-white p-1.5 shadow-xl" style={{ zIndex: 2000 }}>
+            <div className="absolute left-0 top-full mt-1.5 max-h-72 w-full min-w-0 overflow-y-auto rounded-lg border border-[#e2e8f0] bg-white p-1.5 shadow-xl sm:w-64" style={{ zIndex: 2000 }}>
               {districts.map((district) => (
                 <button
                   key={district.district}
@@ -270,8 +270,8 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
           )}
         </div>
 
-        <div className="relative w-[340px] max-w-full">
-          <div className="flex items-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[13px] font-semibold text-[#0F2A3D] shadow-sm">
+        <div className="relative w-full sm:w-[340px] sm:max-w-full">
+          <div className="flex items-center gap-2 rounded-lg border border-[#e2e8f0] bg-white px-3 py-2.5 text-[13px] font-semibold text-[#0F2A3D] shadow-sm sm:py-2">
             {loadingAreas ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : searchingAreas ? (
@@ -295,7 +295,7 @@ export default function LocationSelector({ onLocationChange, defaultDistrict = "
             />
           </div>
           {areaFocused && areaQuery.trim().length >= 2 && (
-            <div className="absolute left-0 top-full mt-1.5 max-h-80 w-80 overflow-y-auto rounded-lg border border-[#e2e8f0] bg-white p-1.5 shadow-xl" style={{ zIndex: 2000 }}>
+            <div className="absolute left-0 top-full mt-1.5 max-h-80 w-full overflow-y-auto rounded-lg border border-[#e2e8f0] bg-white p-1.5 shadow-xl sm:w-80" style={{ zIndex: 2000 }}>
               {visibleAreas.map((area) => (
                 <button
                   key={area.id}

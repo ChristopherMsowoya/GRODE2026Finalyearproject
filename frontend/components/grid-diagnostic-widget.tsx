@@ -94,8 +94,8 @@ export default function GridDiagnosticWidget({
   ]
 
   return (
-    <div className="rounded-lg bg-white p-6 shadow-sm border border-[#e9edf1]">
-      <div className="flex items-center justify-between mb-4">
+    <div className="rounded-lg bg-white p-4 shadow-sm border border-[#e9edf1] sm:p-6">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-[14px] font-bold text-[#0F2A3D]">Grid Diagnostic Widget</h3>
         {liveStatus === "live" && (
           <span className="flex items-center gap-1.5 text-[11px] font-semibold text-[#22c55e] bg-[#f0fdf4] px-3 py-1 rounded-full border border-[#bbf7d0]">
@@ -118,7 +118,7 @@ export default function GridDiagnosticWidget({
                 </span>
               </span>
             </div>
-            <p className="mt-1 text-[15px] font-extrabold text-[#0F2A3D]">{value}</p>
+            <p className="mt-1 break-words text-[14px] font-extrabold text-[#0F2A3D] sm:text-[15px]">{value}</p>
           </div>
         ))}
       </div>

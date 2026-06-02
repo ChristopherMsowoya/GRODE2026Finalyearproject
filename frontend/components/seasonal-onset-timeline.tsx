@@ -115,7 +115,7 @@ export default function SeasonalOnsetTimeline({ location }: { location: Selected
 
   return (
     <section className="rounded-lg border border-[#e2e8f0] bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-[#f0f4f8] px-6 py-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-3 border-b border-[#f0f4f8] px-4 py-4 md:flex-row md:items-center md:justify-between md:px-6">
         <div>
           <div className="flex items-center gap-2">
             <h3 className="text-[16px] font-bold text-[#0F2A3D]">Seasonal Timeline</h3>
@@ -127,16 +127,16 @@ export default function SeasonalOnsetTimeline({ location }: { location: Selected
             </p>
           )}
         </div>
-        <div className="relative z-[1300] flex flex-wrap items-center gap-2">
-          <span className="rounded-md border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[12px] font-bold text-[#6b7a8d]">
+        <div className="relative z-[1300] grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+          <span className="col-span-2 rounded-md border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-center text-[12px] font-bold text-[#6b7a8d] sm:col-span-1">
             Enter season range
           </span>
-          <input value={customStart} onChange={(event) => setCustomStart(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder={availableYears[0] ? String(availableYears[0]) : "Start"} className="w-20 rounded-md border border-[#e2e8f0] px-2 py-1.5 text-[12px] font-semibold outline-none focus:border-[#0F2A3D]" />
-          <input value={customEnd} onChange={(event) => setCustomEnd(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder={availableYears.at(-1) ? String(availableYears.at(-1)) : "End"} className="w-20 rounded-md border border-[#e2e8f0] px-2 py-1.5 text-[12px] font-semibold outline-none focus:border-[#0F2A3D]" />
+          <input value={customStart} onChange={(event) => setCustomStart(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder={availableYears[0] ? String(availableYears[0]) : "Start"} className="w-full rounded-md border border-[#e2e8f0] px-2 py-1.5 text-[12px] font-semibold outline-none focus:border-[#0F2A3D] sm:w-20" />
+          <input value={customEnd} onChange={(event) => setCustomEnd(event.target.value.replace(/\D/g, "").slice(0, 4))} placeholder={availableYears.at(-1) ? String(availableYears.at(-1)) : "End"} className="w-full rounded-md border border-[#e2e8f0] px-2 py-1.5 text-[12px] font-semibold outline-none focus:border-[#0F2A3D] sm:w-20" />
         </div>
       </div>
 
-      <div className="grid gap-3 p-6 md:grid-cols-5">
+      <div className="grid gap-3 p-4 sm:grid-cols-2 md:grid-cols-5 md:p-6">
         <SummaryTile label="P10" value={timeline?.p10_onset_date} tooltip={TOOLTIP_TEXT.p10} loading={loading} />
         <SummaryTile label="Median Onset" value={timeline?.median_onset_date} tooltip={TOOLTIP_TEXT.median} loading={loading} />
         <SummaryTile label="P90" value={timeline?.p90_onset_date} tooltip={TOOLTIP_TEXT.p90} loading={loading} />
@@ -144,7 +144,7 @@ export default function SeasonalOnsetTimeline({ location }: { location: Selected
         <SummaryTile label="Variability" value={formatDays(timeline?.onset_variability_std)} tooltip={TOOLTIP_TEXT.variability} loading={loading} />
       </div>
 
-      <div className="border-t border-[#f0f4f8] px-6 py-5">
+      <div className="border-t border-[#f0f4f8] px-4 py-5 md:px-6">
         {chartData.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <p className="text-[12px] font-semibold text-[#6b7a8d]">
@@ -193,7 +193,7 @@ export default function SeasonalOnsetTimeline({ location }: { location: Selected
           </div>
         ) : chartData.length ? (
           <div className="w-full overflow-x-auto overflow-y-hidden rounded-lg border border-[#edf2f7] bg-white">
-            <div className="h-[300px]" style={{ width: chartWidth, minWidth: "100%" }}>
+            <div className="h-[300px]" style={{ width: chartWidth, minWidth: "680px" }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 12 }}>
                 <CartesianGrid stroke="#edf2f7" strokeDasharray="3 3" />

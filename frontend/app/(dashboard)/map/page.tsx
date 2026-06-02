@@ -308,10 +308,10 @@ export default function MapPage() {
         }
       `}</style>
 
-      <div className="mb-4 rounded-xl border border-[#d8dee4] bg-white p-5">
+      <div className="mb-4 rounded-xl border border-[#d8dee4] bg-white p-4 sm:p-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <h1 className="text-[28px] font-extrabold leading-tight text-[#0F2A3D]">Grid-Level Rainfall Diagnostics</h1>
+            <h1 className="text-[24px] font-extrabold leading-tight text-[#0F2A3D] sm:text-[28px]">Grid-Level Rainfall Diagnostics</h1>
             <p className="mt-1 text-[14px] leading-relaxed text-[#64748b]">
               5km computational grid cells carry the rainfall probabilities. Districts are reference overlays only.
             </p>
@@ -324,7 +324,7 @@ export default function MapPage() {
 
       {dataError && <div className="mb-4 rounded-lg border border-[#fecaca] bg-[#fef2f2] px-4 py-3 text-sm font-medium text-[#b91c1c]">{dataError}</div>}
 
-      <div className="relative overflow-hidden rounded-xl border border-[#d8dee4] bg-white" style={{ height: "calc(100vh - 11rem)", minHeight: 600 }}>
+      <div className="relative h-[68vh] min-h-[430px] overflow-hidden rounded-xl border border-[#d8dee4] bg-white md:h-[calc(100vh-11rem)] md:min-h-[600px]">
         {dataLoading && (
           <div className="absolute inset-0 z-[900] flex items-center justify-center bg-white/80 backdrop-blur-sm">
             <div className="flex flex-col items-center gap-3">
@@ -336,12 +336,12 @@ export default function MapPage() {
 
         <div ref={mapContainer} style={{ width: "100%", height: "100%" }} />
 
-        <div className="absolute left-5 top-5 z-[800] flex gap-1 rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+        <div className="absolute left-3 top-3 z-[800] flex max-w-[calc(100%-1.5rem)] gap-1 overflow-x-auto rounded-xl border border-white/70 bg-white/95 p-1.5 shadow-lg backdrop-blur sm:left-5 sm:top-5">
           {(Object.keys(LAYER_CONFIG) as DiagnosticLayer[]).map((layer) => (
             <button
               key={layer}
               onClick={() => setActiveLayer(layer)}
-              className={`rounded-lg px-3 py-2 text-[12px] font-bold transition-all ${activeLayer === layer ? "text-white shadow-sm" : "text-[#0F2A3D] hover:bg-[#eef2f4]"}`}
+              className={`shrink-0 rounded-lg px-3 py-2 text-[12px] font-bold transition-all ${activeLayer === layer ? "text-white shadow-sm" : "text-[#0F2A3D] hover:bg-[#eef2f4]"}`}
               style={activeLayer === layer ? { background: LAYER_CONFIG[layer].color } : undefined}
             >
               {LAYER_CONFIG[layer].shortLabel}
@@ -351,12 +351,12 @@ export default function MapPage() {
 
         <button
           onClick={() => setShowDistrictLabels((value) => !value)}
-          className={`absolute right-16 top-5 z-[800] rounded-lg border border-white/70 px-3 py-2 text-[12px] font-bold shadow-lg transition-all ${showDistrictLabels ? "bg-[#0F2A3D] text-white" : "bg-white/95 text-[#0F2A3D]"}`}
+          className={`absolute right-3 top-[64px] z-[800] rounded-lg border border-white/70 px-3 py-2 text-[12px] font-bold shadow-lg transition-all sm:right-16 sm:top-5 ${showDistrictLabels ? "bg-[#0F2A3D] text-white" : "bg-white/95 text-[#0F2A3D]"}`}
         >
           {showDistrictLabels ? "Hide Names" : "Show Names"}
         </button>
 
-        <div className="absolute bottom-5 right-5 z-[800] flex items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 shadow-lg text-[12px] text-[#64748b]">
+        <div className="absolute bottom-3 right-3 z-[800] flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 py-2 text-[11px] text-[#64748b] shadow-lg sm:bottom-5 sm:right-5 sm:text-[12px]">
           <Database className="h-3.5 w-3.5" />
           {dbHealth ? `${dbHealth.grid_cell_count} grid cells indexed` : `${gridGeo?.features.length || 0} cells loaded`}
         </div>

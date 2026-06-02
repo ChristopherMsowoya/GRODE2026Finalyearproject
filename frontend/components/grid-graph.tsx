@@ -151,7 +151,7 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
 
   if (!grid || !gridData) {
     return (
-      <div className="rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-8 flex flex-col items-center justify-center gap-2 text-center">
+      <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-[#e2e8f0] bg-[#f8fafc] p-5 text-center sm:p-8">
         <p className="text-[14px] font-semibold text-[#0F2A3D]">{title}</p>
         <p className="text-[12px] text-[#6b7a8d]">Search specific area to view grid-level diagnostics.</p>
       </div>
@@ -160,14 +160,14 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
 
   return (
     <div className="rounded-xl border border-[#e2e8f0] bg-white shadow-sm">
-      <div className="px-6 pt-6 pb-4 border-b border-[#f0f4f8]">
+      <div className="border-b border-[#f0f4f8] px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
         <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2">
-            <h3 className="text-[16px] font-bold text-[#0F2A3D]">{graphTitle}</h3>
+          <div className="flex items-start gap-2">
+            <h3 className="min-w-0 break-words text-[15px] font-bold text-[#0F2A3D] sm:text-[16px]">{graphTitle}</h3>
             <ScientificTooltip text={`${title} shown for the selected grid cell only. Each line represents one rainy season in the selected range.`} />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="flex items-center gap-1.5 rounded-md border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[12px] font-bold text-[#6b7a8d]">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <span className="col-span-2 flex items-center justify-center gap-1.5 rounded-md border border-[#e2e8f0] bg-[#f8fafc] px-2 py-1.5 text-[12px] font-bold text-[#6b7a8d] sm:col-span-1">
               Enter season range
               <ScientificTooltip text="Enter the season start years available in the system, for example 2021 to 2025 for seasons 2021-22 through 2025-26." />
             </span>
@@ -175,19 +175,19 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
               value={customStart}
               onChange={(event) => setCustomStart(event.target.value.replace(/\D/g, "").slice(0, 4))}
               placeholder={availableYears[0] ? String(availableYears[0]) : "Start"}
-              className="w-20 rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D]"
+              className="w-full rounded-lg border border-[#e2e8f0] bg-white px-2 py-1.5 text-[12px] font-semibold text-[#0F2A3D] outline-none focus:border-[#0F2A3D] sm:w-20"
             />
             <input
               value={customEnd}
               onChange={(event) => setCustomEnd(event.target.value.replace(/\D/g, "").slice(0, 4))}
               placeholder={availableYears.at(-1) ? String(availableYears.at(-1)) : "End"}
-              className="w-20 rounded-lg px-2 py-1.5 border border-[#e2e8f0] text-[12px] text-[#0F2A3D] font-semibold bg-white outline-none focus:border-[#0F2A3D]"
+              className="w-full rounded-lg border border-[#e2e8f0] bg-white px-2 py-1.5 text-[12px] font-semibold text-[#0F2A3D] outline-none focus:border-[#0F2A3D] sm:w-20"
             />
           </div>
         </div>
       </div>
 
-      <div className="px-6 pt-4 pb-5">
+      <div className="px-4 pb-5 pt-4 sm:px-6">
         {loading ? (
           <div className="h-[240px] flex items-center justify-center">
             <div
@@ -200,7 +200,8 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
             <p className="text-[13px] font-medium text-[#6b7a8d]">Enter a season range to view grid-level seasonal lines.</p>
           </div>
         ) : chartData.length > 0 && seasons.length > 0 ? (
-          <div className="h-[260px] w-full">
+          <div className="w-full overflow-x-auto overflow-y-hidden rounded-lg border border-[#edf2f7] bg-white">
+          <div className="h-[260px] min-w-[640px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 8, right: 24, left: 0, bottom: 8 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f4f8" />
@@ -249,6 +250,7 @@ export default function GridGraph({ location, metricType }: GridGraphProps) {
                 ))}
               </LineChart>
             </ResponsiveContainer>
+          </div>
           </div>
         ) : (
           <div className="h-[240px] flex items-center justify-center">

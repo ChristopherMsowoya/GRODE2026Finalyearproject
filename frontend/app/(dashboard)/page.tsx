@@ -16,12 +16,12 @@ function MetricTile({
   detail: string
 }) {
   return (
-    <div className="rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm">
+    <div className="rounded-lg border border-[#e2e8f0] bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-md bg-[#eef7f4] text-[#1F7A63]">
         <Icon className="h-5 w-5" />
       </div>
       <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#6b7a8d]">{label}</p>
-      <p className="mt-2 text-[34px] font-black leading-none text-[#0F2A3D]">{value}</p>
+      <p className="mt-2 text-[28px] font-black leading-none text-[#0F2A3D] sm:text-[34px]">{value}</p>
       <p className="mt-2 text-[12px] font-medium leading-relaxed text-[#6b7a8d]">{detail}</p>
     </div>
   )
@@ -65,15 +65,15 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <section className="grid gap-6">
-        <div className="flex min-h-[360px] flex-col justify-between rounded-lg border border-[#e2e8f0] bg-white p-6 shadow-sm md:p-8">
+        <div className="flex min-h-[280px] flex-col justify-between rounded-lg border border-[#e2e8f0] bg-white p-5 shadow-sm sm:min-h-[320px] md:p-8">
           <div>
-            <h1 className="max-w-2xl text-[34px] font-black leading-tight text-[#0F2A3D] md:text-[44px]">
+            <h1 className="max-w-2xl text-[32px] font-black leading-tight text-[#0F2A3D] sm:text-[38px] md:text-[44px]">
               <span className="block">GRODE</span>
-              <span className="mt-1 block text-[18px] font-extrabold text-[#607086] md:text-[24px]">
+              <span className="mt-1 block text-[15px] font-extrabold leading-snug text-[#607086] sm:text-[18px] md:text-[24px]">
                 (Grid-Level Rainfall Detection Engine)
               </span>
             </h1>
-            <p className="mt-4 max-w-xl text-[15px] font-medium leading-relaxed text-[#607086]">
+            <p className="mt-4 max-w-xl text-[13.5px] font-medium leading-relaxed text-[#607086] sm:text-[15px]">
               Scientific climate intelligence for Malawi built from CHIRPS rainfall diagnostics,
               5km grid cells, and grid-level onset, false-onset, and dry-spell outputs.
             </p>
@@ -112,7 +112,7 @@ export default function DashboardPage() {
         </div>*/}
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <MetricTile
           icon={Grid3X3}
           label="Total Grid Cells Analyzed"
