@@ -14,6 +14,12 @@ services:
         value: local
       - key: FRONTEND_ORIGINS
         value: https://grode-frontend.onrender.com
+      - key: CHIRPS_STORAGE_BUCKET
+        value: ChirpsDataset
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
 
   - type: web
     name: grode-frontend

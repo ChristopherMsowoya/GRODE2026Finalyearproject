@@ -258,6 +258,11 @@ export interface SeasonDatasetUploadResponse {
   status: string
   filename: string
   saved_to: string
+  storage?: {
+    bucket: string
+    path: string
+    status_code: number
+  } | null
   size_bytes: number
   season_year: number | null
   config: AlgorithmConfig

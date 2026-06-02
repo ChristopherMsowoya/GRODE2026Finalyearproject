@@ -1,6 +1,7 @@
 from pathlib import Path
 import base64
 import hashlib
+import http.client
 import hmac
 import json
 import os
@@ -9,6 +10,7 @@ import sys
 import uuid
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+from urllib.parse import quote, urlparse
 from collections import Counter
 import csv
 from datetime import datetime, timezone, timedelta
@@ -73,6 +75,9 @@ RESULTS_JSON_PATH = ALGORITHMS_OUTPUTS / "results.json"
 RAW_CHIRPS_DIR = PROJECT_ROOT / "backend" / "algorithms" / "data" / "raw"
 SHAPEFILES_ROOT = PROJECT_ROOT / "backend" / "database" / "data" / "shapefiles"
 ALLOWED_RAINFALL_DATASET_EXTENSIONS = {".nc", ".nc4", ".cdf"}
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
+CHIRPS_STORAGE_BUCKET = os.environ.get("CHIRPS_STORAGE_BUCKET", "ChirpsDataset")
 ADMIN_ACCESS_CODE = os.environ.get("GRODE_ADMIN_ACCESS_CODE") or os.environ.get("ADMIN_ACCESS_CODE") or "grode-admin-2026"
 ADMIN_SESSION_SECRET = os.environ.get("GRODE_ADMIN_SESSION_SECRET") or os.environ.get("SUPABASE_KEY") or ADMIN_ACCESS_CODE
 ADMIN_SESSION_TTL_SECONDS = int(os.environ.get("GRODE_ADMIN_SESSION_TTL_SECONDS", "28800"))
@@ -852,7 +857,107 @@ def extract_raw_dataset_years() -> list[int]:
     return sorted(years)
 
 
+def supabase_is_configured() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def get_supabase_client():
+    if not supabase_is_configured():
+        return None
+    try:
+        from backend.src.supabase_client import supabase
+    except Exception:
+        return None
+    return supabase
+
+
+def extract_supabase_dataset_years() -> list[int]:
+    supabase = get_supabase_client()
+    if not supabase:
+        return []
+    try:
+        response = supabase.table("rainfall_seasons").select("season_year").order("season_year").execute()
+        rows = response.data or []
+    except Exception:
+        return []
+
+    years = set()
+    for row in rows:
+        year = row.get("season_year")
+        if isinstance(year, int):
+            years.add(year)
+        elif isinstance(year, str) and year.isdigit():
+            years.add(int(year))
+    return sorted(years)
+
+
+def upload_file_to_supabase_storage(local_path: Path, storage_path: str):
+    if not supabase_is_configured():
+        return None
+
+    parsed_url = urlparse(SUPABASE_URL)
+    if not parsed_url.hostname:
+        raise HTTPException(status_code=500, detail="SUPABASE_URL is not valid.")
+
+    encoded_bucket = quote(CHIRPS_STORAGE_BUCKET, safe="")
+    encoded_path = "/".join(quote(part, safe="") for part in storage_path.split("/"))
+    endpoint = f"/storage/v1/object/{encoded_bucket}/{encoded_path}"
+    connection = http.client.HTTPSConnection(parsed_url.hostname, parsed_url.port or 443, timeout=120)
+    size_bytes = local_path.stat().st_size
+
+    try:
+        connection.putrequest("POST", endpoint)
+        connection.putheader("Authorization", f"Bearer {SUPABASE_KEY}")
+        connection.putheader("Content-Type", "application/x-netcdf")
+        connection.putheader("Content-Length", str(size_bytes))
+        connection.putheader("x-upsert", "true")
+        connection.endheaders()
+
+        with local_path.open("rb") as dataset_file:
+            while True:
+                chunk = dataset_file.read(1024 * 1024)
+                if not chunk:
+                    break
+                connection.send(chunk)
+
+        response = connection.getresponse()
+        response_body = response.read().decode("utf-8", errors="replace")
+        if response.status >= 400:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Supabase Storage upload failed with status {response.status}: {response_body}",
+            )
+        return {
+            "bucket": CHIRPS_STORAGE_BUCKET,
+            "path": storage_path,
+            "status_code": response.status,
+        }
+    finally:
+        connection.close()
+
+
+def register_supabase_season(season_year: int, filename: str, storage_path: str, size_bytes: int):
+    supabase = get_supabase_client()
+    if not supabase:
+        return None
+    payload = {
+        "season_year": int(season_year),
+        "file_name": filename,
+        "storage_path": storage_path,
+        "file_size_bytes": int(size_bytes),
+        "status": "uploaded",
+    }
+    try:
+        response = supabase.table("rainfall_seasons").upsert(payload, on_conflict="season_year").execute()
+        return response.data
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not register season in Supabase: {exc}") from exc
+
+
 def available_dataset_years(results: list[dict] | None = None) -> list[int]:
+    supabase_years = extract_supabase_dataset_years()
+    if supabase_years:
+        return supabase_years
     raw_years = extract_raw_dataset_years()
     if raw_years:
         return raw_years
@@ -1000,6 +1105,13 @@ async def upload_season_dataset(
         raise HTTPException(status_code=400, detail="Uploaded rainfall dataset was empty.")
 
     resolved_year = season_year or infer_season_year_from_filename(safe_filename)
+    storage_path = f"raw/{safe_filename}"
+    storage_result = None
+    if supabase_is_configured():
+        storage_result = upload_file_to_supabase_storage(target_path, storage_path)
+        if resolved_year:
+            register_supabase_season(int(resolved_year), safe_filename, storage_path, size_bytes)
+
     config = load_algorithm_config()
     if resolved_year:
         active_years = set(config.get("enabled_season_years") or [])
@@ -1016,11 +1128,13 @@ async def upload_season_dataset(
         "status": "uploaded",
         "filename": safe_filename,
         "saved_to": str(target_path),
+        "storage": storage_result,
         "size_bytes": size_bytes,
         "season_year": resolved_year,
         "config": config,
         "message": (
-            f"{safe_filename} was saved to backend/algorithms/data/raw"
+            f"{safe_filename} was saved"
+            + (f" to Supabase Storage bucket {CHIRPS_STORAGE_BUCKET}" if storage_result else " to backend/algorithms/data/raw")
             + (f" and registered as the {resolved_year}-{str(resolved_year + 1)[-2:]} season." if resolved_year else ".")
             + " The home dashboard season count will update from loaded datasets. Rerun the rainfall pipeline to generate updated maps and graph outputs."
         ),
