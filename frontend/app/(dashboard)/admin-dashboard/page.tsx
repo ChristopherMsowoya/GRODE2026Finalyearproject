@@ -6,6 +6,7 @@ import { Loader2, Lock, LogOut, RotateCcw, Save, ShieldCheck, SlidersHorizontal,
 import {
   createAdminSession,
   fetchAlgorithmConfig,
+  registerSeasonDataset,
   updateAlgorithmConfig,
   uploadSeasonDataset,
   verifyAdminSession,
@@ -17,6 +18,7 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ]
 const ADMIN_TOKEN_KEY = "grode_admin_token"
+const LARGE_DATASET_BYTES = 100 * 1024 * 1024
 
 export default function AdminDashboardPage() {
   const [config, setConfig] = useState<AlgorithmConfig | null>(null)
@@ -129,6 +131,10 @@ export default function AdminDashboardPage() {
     if (!datasetFile || !adminToken) return
     const year = newSeasonYear.length === 4 ? Number(newSeasonYear) : null
     if (year !== null && !Number.isFinite(year)) return
+    if (datasetFile.size > LARGE_DATASET_BYTES) {
+      setMessage("This CHIRPS file is too large to proxy through Render. Upload it directly to Supabase Storage under raw/" + datasetFile.name + ", then use Register Season.")
+      return
+    }
 
     setUploading(true)
     setMessage("")
@@ -143,6 +149,27 @@ export default function AdminDashboardPage() {
       setMessage(response.message)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not upload rainfall dataset.")
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const registerDataset = async () => {
+    if (!datasetFile || !adminToken || newSeasonYear.length !== 4) return
+    const year = Number(newSeasonYear)
+    if (!Number.isFinite(year)) return
+
+    setUploading(true)
+    setMessage("")
+    try {
+      const response = await registerSeasonDataset(datasetFile.name, year, adminToken)
+      setConfig(response.config)
+      setAvailableYears((years) => Array.from(new Set([...years, response.season_year])).sort())
+      setDatasetFile(null)
+      setNewSeasonYear("")
+      setMessage(response.message)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not register rainfall season.")
     } finally {
       setUploading(false)
     }
@@ -307,9 +334,17 @@ export default function AdminDashboardPage() {
               {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {uploading ? "Loading..." : "Load Dataset"}
             </button>
+            <button
+              type="button"
+              onClick={registerDataset}
+              disabled={!datasetFile || newSeasonYear.length !== 4 || uploading}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-[#d6dee8] bg-white px-4 py-2 text-[13px] font-bold text-[#0F2A3D] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Register Season
+            </button>
           </div>
           <p className="mt-2 text-[12px] leading-5 text-[#6b7a8d]">
-            Choose the downloaded CHIRPS NetCDF file. GRODE will save it to backend/algorithms/data/raw and register the season; the year can also be inferred from filenames like chirps-v2.0.2026.days_p05.nc.
+            Small files can be loaded here. For large CHIRPS NetCDF files, upload the file directly in Supabase Storage to raw/filename.nc, enter the season year, then click Register Season.
           </p>
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">

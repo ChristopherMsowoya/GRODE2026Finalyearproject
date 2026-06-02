@@ -788,6 +788,13 @@ class AdminSessionRequest(BaseModel):
     access_code: str
 
 
+class AdminSeasonRegistrationRequest(BaseModel):
+    season_year: int
+    file_name: str
+    storage_path: str | None = None
+    file_size_bytes: int | None = None
+
+
 def base64url_encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
@@ -954,6 +961,16 @@ def register_supabase_season(season_year: int, filename: str, storage_path: str,
         raise HTTPException(status_code=500, detail=f"Could not register season in Supabase: {exc}") from exc
 
 
+def activate_registered_year(season_year: int) -> dict:
+    config = load_algorithm_config()
+    active_years = set(config.get("enabled_season_years") or [])
+    if not active_years:
+        active_years.update(available_dataset_years())
+    active_years.add(int(season_year))
+    config["enabled_season_years"] = sorted(active_years)
+    return save_algorithm_config(config)
+
+
 def available_dataset_years(results: list[dict] | None = None) -> list[int]:
     supabase_years = extract_supabase_dataset_years()
     if supabase_years:
@@ -1114,12 +1131,7 @@ async def upload_season_dataset(
 
     config = load_algorithm_config()
     if resolved_year:
-        active_years = set(config.get("enabled_season_years") or [])
-        if not active_years:
-            active_years.update(available_dataset_years())
-        active_years.add(int(resolved_year))
-        config["enabled_season_years"] = sorted(active_years)
-        config = save_algorithm_config(config)
+        config = activate_registered_year(int(resolved_year))
 
     _load_results_cached.cache_clear()
     load_raw_chirps_dataset.cache_clear()
@@ -1137,6 +1149,37 @@ async def upload_season_dataset(
             + (f" to Supabase Storage bucket {CHIRPS_STORAGE_BUCKET}" if storage_result else " to backend/algorithms/data/raw")
             + (f" and registered as the {resolved_year}-{str(resolved_year + 1)[-2:]} season." if resolved_year else ".")
             + " The home dashboard season count will update from loaded datasets. Rerun the rainfall pipeline to generate updated maps and graph outputs."
+        ),
+    }
+
+
+@app.post("/api/admin/algorithm-config/register-season")
+def register_uploaded_season(payload: AdminSeasonRegistrationRequest, _: bool = Depends(require_admin_session)):
+    safe_filename = Path(payload.file_name).name
+    if not safe_filename or safe_filename in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Provide a valid dataset filename.")
+
+    extension = Path(safe_filename).suffix.lower()
+    if extension not in ALLOWED_RAINFALL_DATASET_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_RAINFALL_DATASET_EXTENSIONS))
+        raise HTTPException(status_code=400, detail=f"Unsupported rainfall dataset type. Use one of: {allowed}.")
+
+    storage_path = (payload.storage_path or f"raw/{safe_filename}").strip().lstrip("/")
+    if supabase_is_configured():
+        register_supabase_season(payload.season_year, safe_filename, storage_path, payload.file_size_bytes or 0)
+
+    config = activate_registered_year(payload.season_year)
+    _load_results_cached.cache_clear()
+
+    return {
+        "status": "registered",
+        "filename": safe_filename,
+        "storage_path": storage_path,
+        "season_year": payload.season_year,
+        "config": config,
+        "message": (
+            f"{safe_filename} was registered as the {payload.season_year}-{str(payload.season_year + 1)[-2:]} season. "
+            "Make sure the file exists in Supabase Storage at that path before running the pipeline."
         ),
     }
 

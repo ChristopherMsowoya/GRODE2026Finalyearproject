@@ -269,6 +269,15 @@ export interface SeasonDatasetUploadResponse {
   message: string
 }
 
+export interface SeasonRegistrationResponse {
+  status: string
+  filename: string
+  storage_path: string
+  season_year: number
+  config: AlgorithmConfig
+  message: string
+}
+
 export interface AdminSessionResponse {
   status: string
   token: string
@@ -725,16 +734,29 @@ export function updateAlgorithmConfig(config: AlgorithmConfig, adminToken?: stri
 export async function uploadSeasonDataset(file: File, seasonYear?: number | null, adminToken?: string | null) {
   const params = new URLSearchParams({ filename: file.name })
   if (seasonYear) params.set("season_year", String(seasonYear))
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), 120000)
 
-  const response = await fetch(`${API_BASE_URL}/api/admin/algorithm-config/upload-season?${params.toString()}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": file.type || "application/octet-stream",
-      ...(adminToken ? { "x-admin-token": adminToken } : {}),
-    },
-    body: file,
-    cache: "no-store",
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/api/admin/algorithm-config/upload-season?${params.toString()}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        ...(adminToken ? { "x-admin-token": adminToken } : {}),
+      },
+      body: file,
+      cache: "no-store",
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ApiRequestError("Upload timed out. Large CHIRPS files should be uploaded directly to Supabase Storage, then registered from Admin Dashboard.", { retryable: false })
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
 
   if (!response.ok) {
     let detail = "Could not upload rainfall dataset."
@@ -752,6 +774,21 @@ export async function uploadSeasonDataset(file: File, seasonYear?: number | null
 
   invalidateAlgorithmCaches()
   return response.json() as Promise<SeasonDatasetUploadResponse>
+}
+
+export async function registerSeasonDataset(fileName: string, seasonYear: number, adminToken?: string | null) {
+  return apiFetch<SeasonRegistrationResponse>("/api/admin/algorithm-config/register-season", {
+    method: "POST",
+    headers: adminToken ? { "x-admin-token": adminToken } : undefined,
+    body: JSON.stringify({
+      file_name: fileName,
+      season_year: seasonYear,
+      storage_path: `raw/${fileName}`,
+    }),
+  }).then((response) => {
+    invalidateAlgorithmCaches()
+    return response
+  })
 }
 
 export function fetchGridCells(params?: { limit?: number; offset?: number; source_grid?: string }) {
